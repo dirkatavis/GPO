@@ -532,23 +532,23 @@ def _build_html_table(df: pd.DataFrame) -> str:
     for _, row in df.iterrows():
         if row["VIN"] == "N/A":
             style = ' style="background-color:#ff4444; color:#ffffff; font-weight:bold;"'
-            status_cell = (
+            vin_cell = (
                 '<td style="background-color:#ff0000; color:#ffffff; font-weight:bold;">'
-                'Missing</td>'
+                '⚠ N/A — ACTION REQUIRED</td>'
             )
         else:
             style = ""
-            status_cell = '<td style="color:green; font-weight:bold;">Listed</td>'
+            vin_cell = f"<td>{row['VIN']}</td>"
 
         rows_html += f"""<tr{style}>
             <td>{row['Arrival Date']}</td>
             <td>{row['MVA']}</td>
-            <td>{row['VIN']}</td>
+            {vin_cell}
             <td>{row['Make']}</td>
             <td>{row['Location']}</td>
             <td>{row['Damage Type']}</td>
             <td>{row['Claim#']}</td>
-            {status_cell}
+            <td>verified</td>
         </tr>\n"""
 
     alert_banner = ""
@@ -581,7 +581,7 @@ def _build_html_table(df: pd.DataFrame) -> str:
                 <tr>
                     <th>Arrival Date</th><th>MVA</th><th>VIN</th>
                     <th>Make</th><th>Location</th>
-                    <th>Damage Type</th><th>Claim#</th><th>Status</th>
+                    <th>Damage Type</th><th>Claim#</th><th>WorkItem</th>
                 </tr>
             </thead>
             <tbody>
