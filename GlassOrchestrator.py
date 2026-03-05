@@ -19,13 +19,19 @@ import re
 import smtplib
 import subprocess
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
 
 import pandas as pd
 from openpyxl import load_workbook, Workbook
+
+try:
+    from bs4 import BeautifulSoup
+    HAS_BS4 = True
+except ImportError:
+    HAS_BS4 = False
 
 # ─── Configuration ────────────────────────────────────────────────────────────
 
@@ -115,7 +121,11 @@ def phase1_input() -> tuple[list[str], datetime]:
 
         # Extract body
         body = _extract_body(msg)
-        descriptions = _parse_descriptions(body)
+        # Try HTML table extraction first, then fall back to CSV/plain-text
+        if "<table" in body.lower():
+            descriptions = _parse_html_descriptions(body)
+        else:
+            descriptions = _parse_descriptions(body)
         log.info("Phase 1: Extracted %d description lines", len(descriptions))
 
         # Mark as Seen (IMAP already marks on FETCH unless PEEK is used)
@@ -129,19 +139,30 @@ def phase1_input() -> tuple[list[str], datetime]:
 
 
 def _extract_body(msg: email.message.Message) -> str:
-    """Walk a MIME message and return the plain-text body."""
+    """Walk a MIME message and return the plain-text body, or HTML if no plain-text."""
+    plain = ""
+    html = ""
     if msg.is_multipart():
         for part in msg.walk():
             content_type = part.get_content_type()
-            if content_type == "text/plain":
-                payload = part.get_payload(decode=True)
-                if payload:
-                    return payload.decode("utf-8", errors="replace")
+            payload = part.get_payload(decode=True)
+            if not payload:
+                continue
+            decoded = payload.decode("utf-8", errors="replace")
+            if content_type == "text/plain" and not plain:
+                plain = decoded
+            elif content_type == "text/html" and not html:
+                html = decoded
     else:
+        content_type = msg.get_content_type()
         payload = msg.get_payload(decode=True)
         if payload:
-            return payload.decode("utf-8", errors="replace")
-    return ""
+            decoded = payload.decode("utf-8", errors="replace")
+            if content_type == "text/html":
+                html = decoded
+            else:
+                plain = decoded
+    return plain or html
 
 
 def _parse_descriptions(body: str) -> list[str]:
@@ -160,6 +181,62 @@ def _parse_descriptions(body: str) -> list[str]:
 
     # Fallback: treat each non-empty line as a description
     return [line.strip() for line in lines if line.strip()]
+
+
+def _parse_html_descriptions(html: str) -> list[str]:
+    """
+    Extract 'Description' column values from an HTML table (Orca Scan email).
+    Uses BeautifulSoup if available, otherwise falls back to regex.
+    """
+    if HAS_BS4:
+        soup = BeautifulSoup(html, "html.parser")
+        table = soup.find("table")
+        if not table:
+            return []
+        rows = table.find_all("tr")
+        if not rows:
+            return []
+        # Find Description column index from header row
+        headers = [th.get_text(strip=True) for th in rows[0].find_all(["th", "td"])]
+        if "Description" not in headers:
+            return []
+        desc_idx = headers.index("Description")
+        descriptions = []
+        for row in rows[1:]:
+            cells = row.find_all("td")
+            if len(cells) > desc_idx:
+                val = cells[desc_idx].get_text(strip=True)
+                if val:
+                    descriptions.append(val)
+        return descriptions
+    else:
+        # Regex fallback: extract td contents from rows
+        # Find header row to locate Description column
+        header_match = re.search(
+            r"<tr[^>]*>(.*?)</tr>", html, re.DOTALL | re.IGNORECASE
+        )
+        if not header_match:
+            return []
+        header_cells = re.findall(
+            r"<t[hd][^>]*>(.*?)</t[hd]>", header_match.group(1), re.DOTALL | re.IGNORECASE
+        )
+        header_cells = [re.sub(r"<[^>]+>", "", c).strip() for c in header_cells]
+        if "Description" not in header_cells:
+            return []
+        desc_idx = header_cells.index("Description")
+        # Extract data rows
+        all_rows = re.findall(
+            r"<tr[^>]*>(.*?)</tr>", html, re.DOTALL | re.IGNORECASE
+        )
+        descriptions = []
+        for row_html in all_rows[1:]:  # skip header
+            cells = re.findall(
+                r"<td[^>]*>(.*?)</td>", row_html, re.DOTALL | re.IGNORECASE
+            )
+            cells = [re.sub(r"<[^>]+>", "", c).strip() for c in cells]
+            if len(cells) > desc_idx and cells[desc_idx]:
+                descriptions.append(cells[desc_idx])
+        return descriptions
 
 
 # ─── Phase 2 — Parsing (Triage & Normalization) ──────────────────────────────
@@ -234,6 +311,22 @@ def phase3_worker(mva_list: list[str]) -> None:
     log.info("Phase 3: Worker completed successfully")
 
 
+def validate_results_freshness(results_path: Path, max_age_seconds: int = 300) -> None:
+    """
+    Verify that the results file was recently modified (by the current worker run).
+    Raises RuntimeError if the file is stale or missing.
+    """
+    if not results_path.exists():
+        raise RuntimeError(f"Results file not found: {results_path}")
+    mtime = datetime.fromtimestamp(results_path.stat().st_mtime)
+    age = datetime.now() - mtime
+    if age > timedelta(seconds=max_age_seconds):
+        raise RuntimeError(
+            f"Stale results file: {results_path} was last modified "
+            f"{age} ago (max allowed: {max_age_seconds}s)"
+        )
+
+
 # ─── Phase 4 — Data Merge (Reconciliation) ───────────────────────────────────
 
 
@@ -300,28 +393,8 @@ def phase5_persist(df: pd.DataFrame) -> pd.DataFrame:
     log.info("PHASE 5 — Persistence: Appending to %s [%s] …", MASTER_LOG, SHEET_NAME)
 
     # Determine which rows are truly new
-    existing_keys: set[str] = set()
+    existing_keys = _load_existing_keys(MASTER_LOG, SHEET_NAME)
 
-    if MASTER_LOG.exists():
-        try:
-            wb = load_workbook(str(MASTER_LOG))
-            if SHEET_NAME in wb.sheetnames:
-                ws = wb[SHEET_NAME]
-                max_row = ws.max_row or 1
-                start_row = max(2, max_row - 99)  # last 100 data rows (row 1 = header)
-
-                # Find column indices for MVA and Date
-                headers = [cell.value for cell in ws[1]]
-                mva_idx = headers.index("MVA") if "MVA" in headers else None
-                date_idx = headers.index("Date") if "Date" in headers else None
-
-                if mva_idx is not None and date_idx is not None:
-                    for row in ws.iter_rows(min_row=start_row, max_row=max_row, values_only=True):
-                        key = f"{row[mva_idx]}|{row[date_idx]}"
-                        existing_keys.add(key)
-            wb.close()
-        except Exception as exc:
-            log.warning("Phase 5: Could not read existing workbook — %s", exc)
 
     # Filter out duplicates
     df["_key"] = df["MVA"] + "|" + df["Date"]
@@ -354,6 +427,38 @@ def phase5_persist(df: pd.DataFrame) -> pd.DataFrame:
 
     log.info("Phase 5: Wrote %d new rows to %s", len(new_rows), MASTER_LOG)
     return new_rows
+
+
+def _load_existing_keys(log_path: Path, sheet_name: str) -> set[str]:
+    """
+    Read the last 100 data rows from the given Excel workbook/sheet and
+    return a set of 'MVA|Date' composite keys for idempotency checking.
+    """
+    existing_keys: set[str] = set()
+    if not log_path.exists():
+        return existing_keys
+    try:
+        wb = load_workbook(str(log_path))
+        if sheet_name in wb.sheetnames:
+            ws = wb[sheet_name]
+            max_row = ws.max_row or 1
+            start_row = max(2, max_row - 99)
+            headers = [cell.value for cell in ws[1]]
+            mva_idx = headers.index("MVA") if "MVA" in headers else None
+            date_idx = headers.index("Date") if "Date" in headers else None
+            if mva_idx is not None and date_idx is not None:
+                for row in ws.iter_rows(min_row=start_row, max_row=max_row, values_only=True):
+                    key = f"{row[mva_idx]}|{row[date_idx]}"
+                    existing_keys.add(key)
+        wb.close()
+    except Exception as exc:
+        log.warning("Could not read existing workbook — %s", exc)
+    return existing_keys
+
+
+def is_duplicate(mva: str, date: str, existing_keys: set[str]) -> bool:
+    """Return True if the MVA+Date composite key already exists."""
+    return f"{mva}|{date}" in existing_keys
 
 
 # ─── Phase 6 — Notification (Distribution) ───────────────────────────────────
@@ -510,6 +615,13 @@ def run_pipeline() -> None:
         return
     except Exception as exc:
         log.error("PHASE 3 FAILED — %s. Pipeline ABORTED.", exc, exc_info=True)
+        return
+
+    # ── Phase 3b: Validate freshness of results ───────────────
+    try:
+        validate_results_freshness(RESULTS_PATH)
+    except RuntimeError as exc:
+        log.error("PHASE 3 VALIDATION FAILED — %s. Pipeline ABORTED.", exc)
         return
 
     # ── Phase 4: Data Merge ───────────────────────────────────
