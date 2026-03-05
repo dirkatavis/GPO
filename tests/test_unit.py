@@ -14,6 +14,7 @@ import pytest
 
 from GlassOrchestrator import (
     MVA_PATTERN,
+    _extract_body,
     _parse_html_descriptions,
     is_duplicate,
     phase2_parse,
@@ -117,9 +118,36 @@ class TestUT2_HTMLExtraction:
     </body></html>
     """
 
+    # Orca Scan packs multiple MVAs into a single Description cell with newlines
+    ORCA_HTML = """
+    <html><body>
+    <table id="rowData" cellspacing="0" cellpadding="4" border="1">
+      <thead>
+        <tr>
+          <th>Type</th><th>Name</th><th>Description</th>
+          <th>Quantity</th><th>Storage Area</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>0205</td><td></td><td>59340120c
+58157002
+58135663cr
+57193500r</td>
+          <td>1</td><td></td>
+        </tr>
+      </tbody>
+    </table>
+    </body></html>
+    """
+
     def test_extracts_description_column(self):
         result = _parse_html_descriptions(self.MOCK_HTML)
         assert result == ["59340120", "59340121r", "59340122rc"]
+
+    def test_orca_multiline_cell_splits_into_individual_mvas(self):
+        result = _parse_html_descriptions(self.ORCA_HTML)
+        assert result == ["59340120c", "58157002", "58135663cr", "57193500r"]
 
     def test_returns_empty_on_no_table(self):
         result = _parse_html_descriptions("<html><body><p>No table</p></body></html>")
@@ -146,6 +174,16 @@ class TestUT2_HTMLExtraction:
         """
         result = _parse_html_descriptions(html)
         assert result == ["59340120", "59340121r"]
+
+    def test_extract_body_prefers_html_with_table(self):
+        """_extract_body should return HTML when it contains a <table>."""
+        import email as email_mod
+        msg = email_mod.mime.multipart.MIMEMultipart("mixed")
+        from email.mime.text import MIMEText
+        msg.attach(MIMEText("<table><tr><th>Description</th></tr></table>", "html"))
+        msg.attach(MIMEText("plain text fallback", "plain"))
+        body = _extract_body(msg)
+        assert "<table>" in body
 
 
 # ─── UT-3: Idempotency Check ─────────────────────────────────────────────────

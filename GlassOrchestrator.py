@@ -139,7 +139,13 @@ def phase1_input() -> tuple[list[str], datetime]:
 
 
 def _extract_body(msg: email.message.Message) -> str:
-    """Walk a MIME message and return the plain-text body, or HTML if no plain-text."""
+    """Walk a MIME message and return the best body for parsing.
+
+    Orca Scan emails contain an HTML table with structured data and a
+    plain-text CSV attachment.  We prefer the HTML when it contains a
+    <table> because the CSV embeds newlines inside quoted fields which
+    break simple line-by-line parsing.
+    """
     plain = ""
     html = ""
     if msg.is_multipart():
@@ -162,6 +168,9 @@ def _extract_body(msg: email.message.Message) -> str:
                 html = decoded
             else:
                 plain = decoded
+    # Prefer HTML when it contains a data table (Orca Scan format)
+    if html and "<table" in html.lower():
+        return html
     return plain or html
 
 
@@ -190,7 +199,8 @@ def _parse_html_descriptions(html: str) -> list[str]:
     """
     if HAS_BS4:
         soup = BeautifulSoup(html, "html.parser")
-        table = soup.find("table")
+        # Prefer the data table (id="rowData") over layout tables
+        table = soup.find("table", id="rowData") or soup.find("table")
         if not table:
             return []
         rows = table.find_all("tr")
@@ -205,15 +215,24 @@ def _parse_html_descriptions(html: str) -> list[str]:
         for row in rows[1:]:
             cells = row.find_all("td")
             if len(cells) > desc_idx:
-                val = cells[desc_idx].get_text(strip=True)
-                if val:
-                    descriptions.append(val)
+                # Orca Scan packs multiple MVAs into one cell separated by newlines
+                raw = cells[desc_idx].get_text(separator="\n", strip=False)
+                for line in raw.splitlines():
+                    line = line.strip()
+                    if line:
+                        descriptions.append(line)
         return descriptions
     else:
         # Regex fallback: extract td contents from rows
+        # Try to isolate the data table (id="rowData") first
+        table_match = re.search(
+            r'<table[^>]*id=["\']rowData["\'][^>]*>(.*?)</table>',
+            html, re.DOTALL | re.IGNORECASE,
+        )
+        search_html = table_match.group(1) if table_match else html
         # Find header row to locate Description column
         header_match = re.search(
-            r"<tr[^>]*>(.*?)</tr>", html, re.DOTALL | re.IGNORECASE
+            r"<tr[^>]*>(.*?)</tr>", search_html, re.DOTALL | re.IGNORECASE
         )
         if not header_match:
             return []
@@ -226,7 +245,7 @@ def _parse_html_descriptions(html: str) -> list[str]:
         desc_idx = header_cells.index("Description")
         # Extract data rows
         all_rows = re.findall(
-            r"<tr[^>]*>(.*?)</tr>", html, re.DOTALL | re.IGNORECASE
+            r"<tr[^>]*>(.*?)</tr>", search_html, re.DOTALL | re.IGNORECASE
         )
         descriptions = []
         for row_html in all_rows[1:]:  # skip header
@@ -235,7 +254,11 @@ def _parse_html_descriptions(html: str) -> list[str]:
             )
             cells = [re.sub(r"<[^>]+>", "", c).strip() for c in cells]
             if len(cells) > desc_idx and cells[desc_idx]:
-                descriptions.append(cells[desc_idx])
+                # Split multi-line cell into individual MVAs
+                for line in cells[desc_idx].splitlines():
+                    line = line.strip()
+                    if line:
+                        descriptions.append(line)
         return descriptions
 
 
