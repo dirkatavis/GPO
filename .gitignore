@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Data artifacts (generated at runtime)
+data/GlassDataParser.csv
+GlassResults.txt
+MasterLog.xlsx
+GlassOrchestrator.log
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store
