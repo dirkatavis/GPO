@@ -41,7 +41,7 @@ CSV_PATH = DATA_DIR / "GlassDataParser.csv"
 RESULTS_PATH = BASE_DIR / "GlassResults.txt"
 MASTER_LOG = BASE_DIR / "MasterLog.xlsx"
 SHEET_NAME = "GlassClaims"
-WORKER_SCRIPT = BASE_DIR / "GlassDataParser.py"
+WORKER_SCRIPT = BASE_DIR / "CGI" / "src" / "GlassDataParser.py"
 
 # Gmail credentials — set via environment variables
 IMAP_SERVER = "imap.gmail.com"

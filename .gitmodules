@@ -1,0 +1,3 @@
+[submodule "CGI"]
+	path = CGI
+	url = https://github.com/dirkatavis/CGI.git

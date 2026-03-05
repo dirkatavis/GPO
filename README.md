@@ -49,11 +49,28 @@ python GlassOrchestrator.py
 
 ```
 GlassOrchestrator.py     # Main 6-phase pipeline
-GlassDataParser.py       # External worker (scraper)
+CGI/                     # Git submodule → dirkatavis/CGI
+  src/
+    GlassDataParser.py  # Phase 3 worker (Selenium scraper)
 data/
   GlassDataParser.csv    # Phase 3 input (auto-generated)
 GlassResults.txt         # Phase 3 output (worker-produced)
 MasterLog.xlsx           # Phase 5 system of record
+```
+
+## Submodule (CGI)
+
+The Phase 3 worker (`GlassDataParser.py`) lives in the [CGI](https://github.com/dirkatavis/CGI) repo, included as a git submodule.
+
+```bash
+# Clone with submodule
+git clone --recurse-submodules https://github.com/dirkatavis/GPO.git
+
+# Or init after cloning
+git submodule update --init --recursive
+
+# Pull latest CGI changes
+git submodule update --remote CGI
 ```
 
 ## Failure Handling
