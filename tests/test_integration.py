@@ -13,10 +13,10 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
+from unittest.mock import MagicMock, patch, call
 
 import pandas as pd
 import pytest
-from openpyxl import load_workbook
 
 from GlassOrchestrator import (
     COLUMNS,
@@ -160,9 +160,9 @@ class TestIT3_MergeReconciliation:
 
 
 class TestIT4_SpreadsheetPersistence:
-    """Verify data is appended to the correct sheet/columns without overwriting."""
+    """Verify data is appended to Google Sheet without overwriting."""
 
-    def _make_test_df(self, mvas, date="2026-03-05"):
+    def _make_test_df(self, mvas, date="03/05/2026"):
         rows = []
         for mva in mvas:
             rows.append({
@@ -177,74 +177,71 @@ class TestIT4_SpreadsheetPersistence:
             })
         return pd.DataFrame(rows, columns=COLUMNS)
 
-    def test_creates_new_workbook(self, tmp_path, monkeypatch):
-        """First write creates file with headers + data."""
-        test_log = tmp_path / "TestLog.xlsx"
-        monkeypatch.setattr("GlassOrchestrator.MASTER_LOG", test_log)
+    def _mock_worksheet(self, existing_rows=None):
+        """Create a mock worksheet with optional existing data."""
+        ws = MagicMock()
+        header = ["Arrival Date", "MVA", "VIN", "Make", "Location",
+                  "Damage Type", "Claim#", "WorkItem"]
+        if existing_rows is None:
+            existing_rows = []
+        ws.get_all_values.return_value = [header] + existing_rows
+        return ws
+
+    @patch("GlassOrchestrator._get_worksheet")
+    def test_creates_new_rows(self, mock_get_ws):
+        """First write updates cells in the sheet."""
+        ws = self._mock_worksheet()
+        mock_get_ws.return_value = ws
 
         df = self._make_test_df(["59340120", "59340121"])
         new_rows = phase5_persist(df)
 
-        assert test_log.exists()
         assert len(new_rows) == 2
+        ws.insert_rows.assert_called_once()
+        written = ws.insert_rows.call_args[0][0]
+        assert len(written) == 2
+        assert written[0][1] == "59340120"
+        assert written[1][1] == "59340121"
 
-        wb = load_workbook(str(test_log))
-        ws = wb[SHEET_NAME]
-        headers = [cell.value for cell in ws[1]]
-        assert headers == COLUMNS
-        assert ws.cell(row=2, column=2).value == "59340120"
-        assert ws.cell(row=3, column=2).value == "59340121"
-        wb.close()
+    @patch("GlassOrchestrator._get_worksheet")
+    def test_appends_without_overwriting(self, mock_get_ws):
+        """Second write appends new rows; existing data untouched."""
+        existing = [["03/05/2026", "59340120", "1HGCM82633A004352",
+                      "Windshield", "APO", "Replacement", "Pending", "verified"]]
+        ws = self._mock_worksheet(existing)
+        mock_get_ws.return_value = ws
 
-    def test_appends_without_overwriting(self, tmp_path, monkeypatch):
-        """Second write appends new rows; original rows untouched."""
-        test_log = tmp_path / "TestLog.xlsx"
-        monkeypatch.setattr("GlassOrchestrator.MASTER_LOG", test_log)
-
-        # First batch
-        df1 = self._make_test_df(["59340120"])
-        phase5_persist(df1)
-
-        # Second batch (different MVA)
-        df2 = self._make_test_df(["59340121"])
-        new_rows = phase5_persist(df2)
+        df = self._make_test_df(["59340121"])
+        new_rows = phase5_persist(df)
 
         assert len(new_rows) == 1
+        ws.insert_rows.assert_called_once()
+        written = ws.insert_rows.call_args[0][0]
+        assert written[0][1] == "59340121"
 
-        wb = load_workbook(str(test_log))
-        ws = wb[SHEET_NAME]
-        assert ws.max_row == 3  # header + 2 data rows
-        assert ws.cell(row=2, column=2).value == "59340120"  # original intact
-        assert ws.cell(row=3, column=2).value == "59340121"  # appended
-        wb.close()
-
-    def test_idempotency_prevents_duplicate(self, tmp_path, monkeypatch):
-        """Same MVA+Date written twice → only one row stored."""
-        test_log = tmp_path / "TestLog.xlsx"
-        monkeypatch.setattr("GlassOrchestrator.MASTER_LOG", test_log)
+    @patch("GlassOrchestrator._get_worksheet")
+    def test_idempotency_prevents_duplicate(self, mock_get_ws):
+        """Same MVA+Date already in sheet → no rows inserted."""
+        existing = [["03/05/2026", "59340120", "1HGCM82633A004352",
+                      "Windshield", "APO", "Replacement", "Pending", "verified"]]
+        ws = self._mock_worksheet(existing)
+        mock_get_ws.return_value = ws
 
         df = self._make_test_df(["59340120"])
-        phase5_persist(df)
-        new_rows = phase5_persist(df.copy())
+        new_rows = phase5_persist(df)
 
         assert len(new_rows) == 0
+        ws.insert_rows.assert_not_called()
 
-        wb = load_workbook(str(test_log))
-        ws = wb[SHEET_NAME]
-        assert ws.max_row == 2  # header + 1 data row (no duplicate)
-        wb.close()
-
-    def test_correct_columns_written(self, tmp_path, monkeypatch):
+    @patch("GlassOrchestrator._get_worksheet")
+    def test_correct_columns_written(self, mock_get_ws):
         """Verify all 8 columns match the expected schema."""
-        test_log = tmp_path / "TestLog.xlsx"
-        monkeypatch.setattr("GlassOrchestrator.MASTER_LOG", test_log)
+        ws = self._mock_worksheet()
+        mock_get_ws.return_value = ws
 
         df = self._make_test_df(["59340120"])
         phase5_persist(df)
 
-        wb = load_workbook(str(test_log))
-        ws = wb[SHEET_NAME]
-        row_data = [cell.value for cell in ws[2]]
-        assert row_data == ["2026-03-05", "59340120", "1HGCM82633A004352",
-                            "Windshield", "APO", "Replacement", "Pending", "verified"]
-        wb.close()
+        written = ws.insert_rows.call_args[0][0]
+        assert written[0] == ["03/05/2026", "59340120", "1HGCM82633A004352",
+                                "Windshield", "APO", "Replacement", "Pending", "verified"]

@@ -6,7 +6,7 @@ Phases:
   2. Parsing     – Regex triage, build session manifest
   3. Worker      – Write CSV, invoke GlassDataParser.py subprocess
   4. Data Merge  – Left-join manifest with scraper results
-  5. Persistence – Append to MasterLog.xlsx (idempotent)
+  5. Persistence – Append to Google Sheet (idempotent)
   6. Notification – HTML email for Replacement items
 """
 
@@ -24,8 +24,8 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
 
+import gspread
 import pandas as pd
-from openpyxl import load_workbook, Workbook
 
 try:
     from bs4 import BeautifulSoup
@@ -39,9 +39,12 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 CSV_PATH = DATA_DIR / "GlassDataParser.csv"
 RESULTS_PATH = BASE_DIR / "GlassResults.txt"
-MASTER_LOG = BASE_DIR / "MasterLog.xlsx"
-SHEET_NAME = "GlassClaims"
 WORKER_SCRIPT = BASE_DIR / "CGI" / "src" / "GlassDataParser.py"
+
+# Google Sheets target
+SERVICE_ACCOUNT_JSON = BASE_DIR / "Service_account.json"
+SPREADSHEET_ID = "1eltlDO-nt-rBicbz_h3CmPc4g0TJNR9wFcsAw2ngNvs"
+SHEET_NAME = "GlassClaims"
 
 # Gmail credentials — set via environment variables
 IMAP_SERVER = "imap.gmail.com"
@@ -278,7 +281,7 @@ def phase2_parse(descriptions: list[str], email_date: datetime) -> tuple[dict, l
 
     manifest: dict[str, dict] = {}
     mva_list: list[str] = []
-    date_str = email_date.strftime("%Y-%m-%d")
+    date_str = email_date.strftime("%m/%d/%Y")
 
     for desc in descriptions:
         match = MVA_PATTERN.match(desc.strip())
@@ -418,22 +421,30 @@ def phase4_merge(manifest: dict) -> pd.DataFrame:
 # ─── Phase 5 — Persistence (System of Record) ────────────────────────────────
 
 
+def _get_worksheet():
+    """Authenticate with Google Sheets and return the GlassClaims worksheet."""
+    gc = gspread.service_account(filename=str(SERVICE_ACCOUNT_JSON))
+    sh = gc.open_by_key(SPREADSHEET_ID)
+    return sh.worksheet(SHEET_NAME)
+
+
 def phase5_persist(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Append merged data to MasterLog.xlsx on the 'GlassClaims' sheet.
+    Append merged data to Google Sheet 'ATL_Data 2026 : GlassClaims'.
 
-    Idempotency: Composite key (MVA + Date) is checked against the last
-    100 rows of the existing sheet. Duplicate rows are silently skipped.
+    Inserts new rows above the summary section so formulas stay intact.
+    Idempotency: Composite key (MVA + Arrival Date) is checked against
+    existing rows. Duplicate rows are silently skipped.
 
     Returns the DataFrame of actually-new rows written.
     """
-    log.info("PHASE 5 — Persistence: Appending to %s [%s] …", MASTER_LOG, SHEET_NAME)
+    log.info("PHASE 5 — Persistence: Appending to Google Sheet [%s] …", SHEET_NAME)
+
+    ws = _get_worksheet()
 
     # Determine which rows are truly new
-    existing_keys = _load_existing_keys(MASTER_LOG, SHEET_NAME)
+    existing_keys = _load_existing_keys(ws)
 
-
-    # Filter out duplicates
     df["_key"] = df["MVA"] + "|" + df["Arrival Date"]
     new_rows = df[~df["_key"].isin(existing_keys)].drop(columns=["_key"]).copy()
     df.drop(columns=["_key"], inplace=True)
@@ -442,54 +453,46 @@ def phase5_persist(df: pd.DataFrame) -> pd.DataFrame:
         log.info("Phase 5: No new rows to write (all duplicates)")
         return new_rows
 
-    # Append to workbook
-    if MASTER_LOG.exists():
-        wb = load_workbook(str(MASTER_LOG))
-        if SHEET_NAME not in wb.sheetnames:
-            ws = wb.create_sheet(SHEET_NAME)
-            ws.append(COLUMNS)
-        else:
-            ws = wb[SHEET_NAME]
-    else:
-        wb = Workbook()
-        ws = wb.active
-        ws.title = SHEET_NAME
-        ws.append(COLUMNS)
+    # Find the insertion point: first empty row after last data row (column B = MVA)
+    all_vals = ws.get_all_values()
+    insert_row = 2  # default: right after header
+    for i, row in enumerate(all_vals):
+        if len(row) > 1 and row[1].strip():  # column B has MVA
+            insert_row = i + 2  # next row (1-indexed)
 
+    # Build rows as lists matching the 8-column contract
+    rows_to_insert = []
     for _, row in new_rows.iterrows():
-        ws.append([row[col] for col in COLUMNS])
+        rows_to_insert.append([row[col] for col in COLUMNS])
 
-    wb.save(str(MASTER_LOG))
-    wb.close()
+    # Insert rows above the summary section (pushes summary down automatically)
+    ws.insert_rows(rows_to_insert, row=insert_row)
 
-    log.info("Phase 5: Wrote %d new rows to %s", len(new_rows), MASTER_LOG)
+    log.info("Phase 5: Wrote %d new rows to Google Sheet at row %d", len(new_rows), insert_row)
     return new_rows
 
 
-def _load_existing_keys(log_path: Path, sheet_name: str) -> set[str]:
+def _load_existing_keys(ws) -> set[str]:
     """
-    Read the last 100 data rows from the given Excel workbook/sheet and
-    return a set of 'MVA|Date' composite keys for idempotency checking.
+    Read existing MVA|Date composite keys from the Google Sheet worksheet
+    for idempotency checking.
     """
     existing_keys: set[str] = set()
-    if not log_path.exists():
-        return existing_keys
     try:
-        wb = load_workbook(str(log_path))
-        if sheet_name in wb.sheetnames:
-            ws = wb[sheet_name]
-            max_row = ws.max_row or 1
-            start_row = max(2, max_row - 99)
-            headers = [cell.value for cell in ws[1]]
-            mva_idx = headers.index("MVA") if "MVA" in headers else None
-            date_idx = headers.index("Arrival Date") if "Arrival Date" in headers else None
-            if mva_idx is not None and date_idx is not None:
-                for row in ws.iter_rows(min_row=start_row, max_row=max_row, values_only=True):
-                    key = f"{row[mva_idx]}|{row[date_idx]}"
-                    existing_keys.add(key)
-        wb.close()
+        all_vals = ws.get_all_values()
+        if not all_vals:
+            return existing_keys
+        headers = all_vals[0]
+        mva_idx = headers.index("MVA") if "MVA" in headers else None
+        date_idx = headers.index("Arrival Date") if "Arrival Date" in headers else None
+        if mva_idx is None or date_idx is None:
+            return existing_keys
+        for row in all_vals[1:]:
+            if len(row) > max(mva_idx, date_idx) and row[mva_idx].strip():
+                key = f"{row[mva_idx]}|{row[date_idx]}"
+                existing_keys.add(key)
     except Exception as exc:
-        log.warning("Could not read existing workbook — %s", exc)
+        log.warning("Could not read existing sheet data — %s", exc)
     return existing_keys
 
 

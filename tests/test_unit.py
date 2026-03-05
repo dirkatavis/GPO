@@ -193,22 +193,22 @@ class TestUT3_Idempotency:
     """Verify the duplicate-detection logic using MVA+Date composite keys."""
 
     MOCK_EXISTING = {
-        "59340120|2026-03-05",
-        "59340121|2026-03-05",
-        "59340122|2026-03-04",
+        "59340120|03/05/2026",
+        "59340121|03/05/2026",
+        "59340122|03/04/2026",
     }
 
     def test_duplicate_returns_true(self):
-        assert is_duplicate("59340120", "2026-03-05", self.MOCK_EXISTING) is True
+        assert is_duplicate("59340120", "03/05/2026", self.MOCK_EXISTING) is True
 
     def test_new_mva_returns_false(self):
-        assert is_duplicate("99999999", "2026-03-05", self.MOCK_EXISTING) is False
+        assert is_duplicate("99999999", "03/05/2026", self.MOCK_EXISTING) is False
 
     def test_same_mva_different_date_returns_false(self):
-        assert is_duplicate("59340120", "2026-03-06", self.MOCK_EXISTING) is False
+        assert is_duplicate("59340120", "03/06/2026", self.MOCK_EXISTING) is False
 
     def test_empty_existing_returns_false(self):
-        assert is_duplicate("59340120", "2026-03-05", set()) is False
+        assert is_duplicate("59340120", "03/05/2026", set()) is False
 
 
 # ─── UT-4: Sanitization ──────────────────────────────────────────────────────

@@ -49,12 +49,10 @@ class TestFT1_WorkerCrashHandling:
 
     def test_full_pipeline_stops_after_worker_crash(self, tmp_path, monkeypatch):
         """Run full pipeline with a crashing worker — Phase 5/6 must NOT execute."""
-        test_log = tmp_path / "TestLog.xlsx"
         bad_worker = tmp_path / "GlassDataParser.py"
         bad_worker.write_text("import sys; sys.exit(1)\n")
 
         monkeypatch.setattr("GlassOrchestrator.WORKER_SCRIPT", bad_worker)
-        monkeypatch.setattr("GlassOrchestrator.MASTER_LOG", test_log)
         monkeypatch.setattr("GlassOrchestrator.DATA_DIR", tmp_path)
         monkeypatch.setattr("GlassOrchestrator.CSV_PATH", tmp_path / "GlassDataParser.csv")
 
@@ -90,7 +88,6 @@ class TestFT1_WorkerCrashHandling:
 
         assert not persist_called, "Phase 5 should NOT have been called after worker crash"
         assert not notify_called, "Phase 6 should NOT have been called after worker crash"
-        assert not test_log.exists(), "MasterLog should NOT exist after worker crash"
 
 
 # ─── FT-2: Stale Results Protection ──────────────────────────────────────────
@@ -125,7 +122,6 @@ class TestFT2_StaleResultsProtection:
 
     def test_pipeline_aborts_on_stale_results(self, tmp_path, monkeypatch):
         """Full pipeline: stale results → ABORT before Phase 4."""
-        test_log = tmp_path / "TestLog.xlsx"
         results_file = tmp_path / "GlassResults.txt"
         results_file.write_text("MVA,VIN,Desc\n59340120,ABC123,Windshield\n")
 
@@ -139,7 +135,6 @@ class TestFT2_StaleResultsProtection:
 
         monkeypatch.setattr("GlassOrchestrator.WORKER_SCRIPT", ok_worker)
         monkeypatch.setattr("GlassOrchestrator.RESULTS_PATH", results_file)
-        monkeypatch.setattr("GlassOrchestrator.MASTER_LOG", test_log)
         monkeypatch.setattr("GlassOrchestrator.DATA_DIR", tmp_path)
         monkeypatch.setattr("GlassOrchestrator.CSV_PATH", tmp_path / "GlassDataParser.csv")
 
@@ -163,4 +158,3 @@ class TestFT2_StaleResultsProtection:
         run_pipeline()
 
         assert not merge_called, "Phase 4 should NOT execute when results are stale"
-        assert not test_log.exists(), "MasterLog should NOT be written with stale results"
