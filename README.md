@@ -10,19 +10,31 @@ A modular Python pipeline for vehicle glass procurement, built on a **6-phase ar
 | 2 | **Parsing** | Regex triage (`^(\d{8})([rc]*)$`), build session manifest |
 | 3 | **Worker** | Write MVAs to CSV, invoke `GlassDataParser.py` subprocess |
 | 4 | **Data Merge** | Left-join manifest with scraper results; missing VIN → `N/A` |
-| 5 | **Persistence** | Append to `MasterLog.xlsx` (`GlassClaims` tab), idempotent on MVA+Date |
+| 5 | **Persistence** | Append to `MasterLog.xlsx` (`GlassClaims` tab), idempotent on `MVA+Arrival Date` |
 | 6 | **Notification** | HTML email for Replacement items; red-flagged rows for missing VINs |
 
 ## Suffix Rules
 
 | Suffix | Field | Value | Default (no suffix) |
 |--------|-------|-------|---------------------|
-| `r` | WorkType | Repair | Replacement |
-| `c` | ClaimStatus | Claim Generated | Pending |
+| `r` | Damage Type | Repair | Replacement |
+| `c` | Claim# | Claim Generated | Pending |
 
-## Output Columns
+## Data Contract — `ATL_Data 2026 : GlassClaims`
 
-`Date`, `MVA`, `VIN`, `Description`, `Location` (APO), `WorkType`, `ClaimStatus`
+The pipeline output maps 1-to-1 with the `GlassClaims` tab in the master workbook.
+Phase 5 inserts rows below existing data; the idempotency key is **`MVA | Arrival Date`**.
+
+| # | Column | Source | Phase | Notes |
+|---|--------|--------|-------|-------|
+| 1 | **Arrival Date** | Email `Date` header | 2 | `YYYY-MM-DD` |
+| 2 | **MVA** | Orca Scan Description | 2 | 8-digit, suffixes stripped |
+| 3 | **VIN** | CGI scraper (`GlassResults.txt`) | 4 | `N/A` if scraper miss |
+| 4 | **Make** | CGI scraper `Desc` column | 4 | Populated by Phase 4 merge |
+| 5 | **Location** | Constant `APO` | 2 | Always `APO` |
+| 6 | **Damage Type** | Suffix `r` → Repair | 2 | Default: `Replacement` |
+| 7 | **Claim#** | Suffix `c` → Claim Generated | 2 | Default: `Pending` |
+| 8 | **WorkItem** | Pipeline flag | 2 | Always `verified` |
 
 ## Setup
 

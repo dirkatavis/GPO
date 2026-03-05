@@ -166,13 +166,14 @@ class TestIT4_SpreadsheetPersistence:
         rows = []
         for mva in mvas:
             rows.append({
-                "Date": date,
+                "Arrival Date": date,
                 "MVA": mva,
                 "VIN": "1HGCM82633A004352",
-                "Description": mva,
+                "Make": "Windshield",
                 "Location": "APO",
-                "WorkType": "Replacement",
-                "ClaimStatus": "Pending",
+                "Damage Type": "Replacement",
+                "Claim#": "Pending",
+                "WorkItem": "verified",
             })
         return pd.DataFrame(rows, columns=COLUMNS)
 
@@ -234,7 +235,7 @@ class TestIT4_SpreadsheetPersistence:
         wb.close()
 
     def test_correct_columns_written(self, tmp_path, monkeypatch):
-        """Verify all 7 columns match the expected schema."""
+        """Verify all 8 columns match the expected schema."""
         test_log = tmp_path / "TestLog.xlsx"
         monkeypatch.setattr("GlassOrchestrator.MASTER_LOG", test_log)
 
@@ -245,5 +246,5 @@ class TestIT4_SpreadsheetPersistence:
         ws = wb[SHEET_NAME]
         row_data = [cell.value for cell in ws[2]]
         assert row_data == ["2026-03-05", "59340120", "1HGCM82633A004352",
-                            "59340120", "APO", "Replacement", "Pending"]
+                            "Windshield", "APO", "Replacement", "Pending", "verified"]
         wb.close()

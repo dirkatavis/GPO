@@ -58,13 +58,14 @@ MVA_PATTERN = re.compile(r"^(\d{8})([rc]*)$")
 LOCATION = "APO"
 
 COLUMNS = [
-    "Date",
+    "Arrival Date",
     "MVA",
     "VIN",
-    "Description",
+    "Make",
     "Location",
-    "WorkType",
-    "ClaimStatus",
+    "Damage Type",
+    "Claim#",
+    "WorkItem",
 ]
 
 # ─── Logging ──────────────────────────────────────────────────────────────────
@@ -288,17 +289,18 @@ def phase2_parse(descriptions: list[str], email_date: datetime) -> tuple[dict, l
         mva = match.group(1)
         suffixes = match.group(2)
 
-        work_type = "Repair" if "r" in suffixes else "Replacement"
-        claim_status = "Claim Generated" if "c" in suffixes else "Pending"
+        damage_type = "Repair" if "r" in suffixes else "Replacement"
+        claim = "Claim Generated" if "c" in suffixes else "Pending"
 
         manifest[mva] = {
-            "Date": date_str,
+            "Arrival Date": date_str,
             "MVA": mva,
-            "VIN": "",  # Populated in Phase 4
-            "Description": desc.strip(),
+            "VIN": "",       # Populated in Phase 4
+            "Make": "",      # Populated in Phase 4 from GlassResults Desc
             "Location": LOCATION,
-            "WorkType": work_type,
-            "ClaimStatus": claim_status,
+            "Damage Type": damage_type,
+            "Claim#": claim,
+            "WorkItem": "verified",
         }
         mva_list.append(mva)
 
@@ -382,9 +384,16 @@ def phase4_merge(manifest: dict) -> pd.DataFrame:
         log.warning("Phase 4: %s not found — all VINs will be N/A", RESULTS_PATH)
         df_results = pd.DataFrame(columns=["MVA", "VIN"])
 
-    # Left join
+    # Prepare columns for left join
+    join_cols = ["MVA"]
+    rename_map = {"VIN": "VIN_scraped"}
+    if "Desc" in df_results.columns:
+        rename_map["Desc"] = "Make_scraped"
+        join_cols.append("Desc")
+    join_cols.append("VIN")
+
     df_merged = df_manifest.merge(
-        df_results[["MVA", "VIN"]].rename(columns={"VIN": "VIN_scraped"}),
+        df_results[join_cols].rename(columns=rename_map),
         on="MVA",
         how="left",
     )
@@ -392,6 +401,11 @@ def phase4_merge(manifest: dict) -> pd.DataFrame:
     # Populate VIN: scraped value if available, else 'N/A'
     df_merged["VIN"] = df_merged["VIN_scraped"].fillna("N/A")
     df_merged.drop(columns=["VIN_scraped"], inplace=True)
+
+    # Populate Make from scraped Desc if available
+    if "Make_scraped" in df_merged.columns:
+        df_merged["Make"] = df_merged["Make_scraped"].fillna(df_merged["Make"])
+        df_merged.drop(columns=["Make_scraped"], inplace=True)
 
     # Ensure column order
     df_merged = df_merged[COLUMNS]
@@ -420,7 +434,7 @@ def phase5_persist(df: pd.DataFrame) -> pd.DataFrame:
 
 
     # Filter out duplicates
-    df["_key"] = df["MVA"] + "|" + df["Date"]
+    df["_key"] = df["MVA"] + "|" + df["Arrival Date"]
     new_rows = df[~df["_key"].isin(existing_keys)].drop(columns=["_key"]).copy()
     df.drop(columns=["_key"], inplace=True)
 
@@ -468,7 +482,7 @@ def _load_existing_keys(log_path: Path, sheet_name: str) -> set[str]:
             start_row = max(2, max_row - 99)
             headers = [cell.value for cell in ws[1]]
             mva_idx = headers.index("MVA") if "MVA" in headers else None
-            date_idx = headers.index("Date") if "Date" in headers else None
+            date_idx = headers.index("Arrival Date") if "Arrival Date" in headers else None
             if mva_idx is not None and date_idx is not None:
                 for row in ws.iter_rows(min_row=start_row, max_row=max_row, values_only=True):
                     key = f"{row[mva_idx]}|{row[date_idx]}"
@@ -495,13 +509,13 @@ def phase6_notify(df: pd.DataFrame) -> None:
     """
     log.info("PHASE 6 — Notification: Building replacement alert …")
 
-    replacements = df[df["WorkType"] == "Replacement"]
+    replacements = df[df["Damage Type"] == "Replacement"]
     if replacements.empty:
         log.info("Phase 6: No Replacement items — skipping notification")
         return
 
     html = _build_html_table(replacements)
-    subject = f"Glass Replacement Order — {replacements.iloc[0]['Date']} ({len(replacements)} items)"
+    subject = f"Glass Replacement Order — {replacements.iloc[0]['Arrival Date']} ({len(replacements)} items)"
 
     _send_email(subject, html)
     log.info("Phase 6: Notification sent to %s", NOTIFY_RECIPIENTS)
@@ -524,13 +538,14 @@ def _build_html_table(df: pd.DataFrame) -> str:
             vin_cell = f"<td>{row['VIN']}</td>"
 
         rows_html += f"""<tr{style}>
-            <td>{row['Date']}</td>
+            <td>{row['Arrival Date']}</td>
             <td>{row['MVA']}</td>
             {vin_cell}
-            <td>{row['Description']}</td>
+            <td>{row['Make']}</td>
             <td>{row['Location']}</td>
-            <td>{row['WorkType']}</td>
-            <td>{row['ClaimStatus']}</td>
+            <td>{row['Damage Type']}</td>
+            <td>{row['Claim#']}</td>
+            <td>{row['WorkItem']}</td>
         </tr>\n"""
 
     alert_banner = ""
@@ -561,9 +576,9 @@ def _build_html_table(df: pd.DataFrame) -> str:
         <table>
             <thead>
                 <tr>
-                    <th>Date</th><th>MVA</th><th>VIN</th>
-                    <th>Description</th><th>Location</th>
-                    <th>Work Type</th><th>Claim Status</th>
+                    <th>Arrival Date</th><th>MVA</th><th>VIN</th>
+                    <th>Make</th><th>Location</th>
+                    <th>Damage Type</th><th>Claim#</th><th>WorkItem</th>
                 </tr>
             </thead>
             <tbody>

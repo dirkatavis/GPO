@@ -26,7 +26,7 @@ from GlassOrchestrator import (
 
 class TestUT1_SuffixRegex:
     """Verify the parser correctly extracts the 8-digit MVA and maps
-    WorkType / ClaimStatus for all four suffix variations."""
+    Damage Type / Claim# for all four suffix variations."""
 
     def test_plain_mva(self):
         """59340120 → Replacement, Pending"""
@@ -62,27 +62,27 @@ class TestUT1_SuffixRegex:
             ["59340120"], datetime(2026, 3, 5)
         )
         assert "59340120" in manifest
-        assert manifest["59340120"]["WorkType"] == "Replacement"
-        assert manifest["59340120"]["ClaimStatus"] == "Pending"
+        assert manifest["59340120"]["Damage Type"] == "Replacement"
+        assert manifest["59340120"]["Claim#"] == "Pending"
         assert mva_list == ["59340120"]
 
     def test_phase2_mapping_repair(self):
         """59340120r → Repair + Pending"""
         manifest, _ = phase2_parse(["59340120r"], datetime(2026, 3, 5))
-        assert manifest["59340120"]["WorkType"] == "Repair"
-        assert manifest["59340120"]["ClaimStatus"] == "Pending"
+        assert manifest["59340120"]["Damage Type"] == "Repair"
+        assert manifest["59340120"]["Claim#"] == "Pending"
 
     def test_phase2_mapping_claim(self):
         """59340120c → Replacement + Claim Generated"""
         manifest, _ = phase2_parse(["59340120c"], datetime(2026, 3, 5))
-        assert manifest["59340120"]["WorkType"] == "Replacement"
-        assert manifest["59340120"]["ClaimStatus"] == "Claim Generated"
+        assert manifest["59340120"]["Damage Type"] == "Replacement"
+        assert manifest["59340120"]["Claim#"] == "Claim Generated"
 
     def test_phase2_mapping_both(self):
         """59340120rc → Repair + Claim Generated"""
         manifest, _ = phase2_parse(["59340120rc"], datetime(2026, 3, 5))
-        assert manifest["59340120"]["WorkType"] == "Repair"
-        assert manifest["59340120"]["ClaimStatus"] == "Claim Generated"
+        assert manifest["59340120"]["Damage Type"] == "Repair"
+        assert manifest["59340120"]["Claim#"] == "Claim Generated"
 
     def test_phase2_all_four_variations(self):
         """Process all four variations in one batch."""
@@ -90,14 +90,14 @@ class TestUT1_SuffixRegex:
         manifest, mva_list = phase2_parse(descriptions, datetime(2026, 3, 5))
         assert len(manifest) == 4
         assert len(mva_list) == 4
-        assert manifest["59340120"]["WorkType"] == "Replacement"
-        assert manifest["59340120"]["ClaimStatus"] == "Pending"
-        assert manifest["59340121"]["WorkType"] == "Repair"
-        assert manifest["59340121"]["ClaimStatus"] == "Pending"
-        assert manifest["59340122"]["WorkType"] == "Replacement"
-        assert manifest["59340122"]["ClaimStatus"] == "Claim Generated"
-        assert manifest["59340123"]["WorkType"] == "Repair"
-        assert manifest["59340123"]["ClaimStatus"] == "Claim Generated"
+        assert manifest["59340120"]["Damage Type"] == "Replacement"
+        assert manifest["59340120"]["Claim#"] == "Pending"
+        assert manifest["59340121"]["Damage Type"] == "Repair"
+        assert manifest["59340121"]["Claim#"] == "Pending"
+        assert manifest["59340122"]["Damage Type"] == "Replacement"
+        assert manifest["59340122"]["Claim#"] == "Claim Generated"
+        assert manifest["59340123"]["Damage Type"] == "Repair"
+        assert manifest["59340123"]["Claim#"] == "Claim Generated"
 
 
 # ─── UT-2: HTML Extraction ────────────────────────────────────────────────────
