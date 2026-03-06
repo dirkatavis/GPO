@@ -18,8 +18,8 @@ import pytest
 from GlassOrchestrator import (
     run_pipeline,
     validate_results_freshness,
-    phase2_parse,
-    phase3_worker,
+    parse_descriptions_to_manifest,
+    parse_glass_data_results,
 )
 
 
@@ -42,9 +42,9 @@ class TestFT1_WorkerCrashHandling:
         monkeypatch.setattr("GlassOrchestrator.DATA_DIR", tmp_path)
         monkeypatch.setattr("GlassOrchestrator.CSV_PATH", tmp_path / "GlassDataParser.csv")
 
-        # Phase 3 should raise CalledProcessError
+        # Worker step should raise CalledProcessError
         with pytest.raises(subprocess.CalledProcessError) as exc_info:
-            phase3_worker(["59340120", "59340121"])
+            parse_glass_data_results(["59340120", "59340121"])
         assert exc_info.value.returncode == 1
 
     def test_full_pipeline_stops_after_worker_crash(self, tmp_path, monkeypatch):
@@ -56,19 +56,19 @@ class TestFT1_WorkerCrashHandling:
         monkeypatch.setattr("GlassOrchestrator.DATA_DIR", tmp_path)
         monkeypatch.setattr("GlassOrchestrator.CSV_PATH", tmp_path / "GlassDataParser.csv")
 
-        # Mock Phase 1 to return test data (bypass Gmail)
+        # Mock input acquisition to return test data (bypass Gmail)
         mock_descriptions = ["59340120", "59340121r"]
         mock_date = datetime(2026, 3, 5)
         monkeypatch.setattr(
-            "GlassOrchestrator.phase1_input",
+            "GlassOrchestrator.fetch_input_descriptions",
             lambda: (mock_descriptions, mock_date),
         )
 
-        # Track whether Phase 5 / Phase 6 are called
+        # Track whether persistence / notify are called
         persist_called = False
         notify_called = False
-        original_persist = __import__("GlassOrchestrator").phase5_persist
-        original_notify = __import__("GlassOrchestrator").phase6_notify
+        original_persist = __import__("GlassOrchestrator").persist_new_rows
+        original_notify = __import__("GlassOrchestrator").notify_replacement_items
 
         def spy_persist(df):
             nonlocal persist_called
@@ -80,14 +80,14 @@ class TestFT1_WorkerCrashHandling:
             notify_called = True
             return original_notify(df)
 
-        monkeypatch.setattr("GlassOrchestrator.phase5_persist", spy_persist)
-        monkeypatch.setattr("GlassOrchestrator.phase6_notify", spy_notify)
+        monkeypatch.setattr("GlassOrchestrator.persist_new_rows", spy_persist)
+        monkeypatch.setattr("GlassOrchestrator.notify_replacement_items", spy_notify)
 
-        # Run the pipeline — should not crash, but should abort after Phase 3
+        # Run the pipeline — should not crash, but should abort after worker step
         run_pipeline()
 
-        assert not persist_called, "Phase 5 should NOT have been called after worker crash"
-        assert not notify_called, "Phase 6 should NOT have been called after worker crash"
+        assert not persist_called, "Persistence should NOT have been called after worker crash"
+        assert not notify_called, "Notify should NOT have been called after worker crash"
 
 
 # ─── FT-2: Stale Results Protection ──────────────────────────────────────────
@@ -121,7 +121,7 @@ class TestFT2_StaleResultsProtection:
             validate_results_freshness(tmp_path / "nonexistent.txt")
 
     def test_pipeline_aborts_on_stale_results(self, tmp_path, monkeypatch):
-        """Full pipeline: stale results → ABORT before Phase 4."""
+        """Full pipeline: stale results -> abort before merge step."""
         results_file = tmp_path / "GlassResults.txt"
         results_file.write_text("MVA,VIN,Desc\n59340120,ABC123,Windshield\n")
 
@@ -141,20 +141,20 @@ class TestFT2_StaleResultsProtection:
         mock_descriptions = ["59340120"]
         mock_date = datetime(2026, 3, 5)
         monkeypatch.setattr(
-            "GlassOrchestrator.phase1_input",
+            "GlassOrchestrator.fetch_input_descriptions",
             lambda: (mock_descriptions, mock_date),
         )
 
         merge_called = False
-        original_merge = __import__("GlassOrchestrator").phase4_merge
+        original_merge = __import__("GlassOrchestrator").merge_manifest_with_results
 
         def spy_merge(manifest):
             nonlocal merge_called
             merge_called = True
             return original_merge(manifest)
 
-        monkeypatch.setattr("GlassOrchestrator.phase4_merge", spy_merge)
+        monkeypatch.setattr("GlassOrchestrator.merge_manifest_with_results", spy_merge)
 
         run_pipeline()
 
-        assert not merge_called, "Phase 4 should NOT execute when results are stale"
+        assert not merge_called, "Merge should NOT execute when results are stale"

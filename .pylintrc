@@ -1,0 +1,4 @@
+[MASTER]
+# Allow modules under CGI/ to be imported as top-level packages (utils, flows, etc.).
+init-hook=import os,sys; sys.path.append(os.path.join(os.getcwd(), "CGI"))
+

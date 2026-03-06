@@ -17,7 +17,7 @@ from GlassOrchestrator import (
     _extract_body,
     _parse_html_descriptions,
     is_duplicate,
-    phase2_parse,
+    parse_descriptions_to_manifest,
 )
 
 
@@ -58,7 +58,7 @@ class TestUT1_SuffixRegex:
 
     def test_phase2_mapping_plain(self):
         """End-to-end: plain MVA → Replacement + Missing"""
-        manifest, mva_list = phase2_parse(
+        manifest, mva_list = parse_descriptions_to_manifest(
             ["59340120"], datetime(2026, 3, 5)
         )
         assert "59340120" in manifest
@@ -68,26 +68,26 @@ class TestUT1_SuffixRegex:
 
     def test_phase2_mapping_repair(self):
         """59340120r → Repair + Missing"""
-        manifest, _ = phase2_parse(["59340120r"], datetime(2026, 3, 5))
+        manifest, _ = parse_descriptions_to_manifest(["59340120r"], datetime(2026, 3, 5))
         assert manifest["59340120"]["Damage Type"] == "Repair"
         assert manifest["59340120"]["Claim#"] == "Missing"
 
     def test_phase2_mapping_claim(self):
         """59340120c → Replacement + Listed"""
-        manifest, _ = phase2_parse(["59340120c"], datetime(2026, 3, 5))
+        manifest, _ = parse_descriptions_to_manifest(["59340120c"], datetime(2026, 3, 5))
         assert manifest["59340120"]["Damage Type"] == "Replacement"
         assert manifest["59340120"]["Claim#"] == "Listed"
 
     def test_phase2_mapping_both(self):
         """59340120rc → Repair + Listed"""
-        manifest, _ = phase2_parse(["59340120rc"], datetime(2026, 3, 5))
+        manifest, _ = parse_descriptions_to_manifest(["59340120rc"], datetime(2026, 3, 5))
         assert manifest["59340120"]["Damage Type"] == "Repair"
         assert manifest["59340120"]["Claim#"] == "Listed"
 
     def test_phase2_all_four_variations(self):
         """Process all four variations in one batch."""
         descriptions = ["59340120", "59340121r", "59340122c", "59340123rc"]
-        manifest, mva_list = phase2_parse(descriptions, datetime(2026, 3, 5))
+        manifest, mva_list = parse_descriptions_to_manifest(descriptions, datetime(2026, 3, 5))
         assert len(manifest) == 4
         assert len(mva_list) == 4
         assert manifest["59340120"]["Damage Type"] == "Replacement"
@@ -218,38 +218,38 @@ class TestUT4_Sanitization:
     """Ensure malformed entries are rejected and never reach the MVA list."""
 
     def test_too_short(self):
-        manifest, mva_list = phase2_parse(["12345"], datetime(2026, 3, 5))
+        manifest, mva_list = parse_descriptions_to_manifest(["12345"], datetime(2026, 3, 5))
         assert manifest == {}
         assert mva_list == []
 
     def test_no_digits(self):
-        manifest, mva_list = phase2_parse(["abcdefgh"], datetime(2026, 3, 5))
+        manifest, mva_list = parse_descriptions_to_manifest(["abcdefgh"], datetime(2026, 3, 5))
         assert manifest == {}
         assert mva_list == []
 
     def test_too_long(self):
-        manifest, mva_list = phase2_parse(["123456789"], datetime(2026, 3, 5))
+        manifest, mva_list = parse_descriptions_to_manifest(["123456789"], datetime(2026, 3, 5))
         assert manifest == {}
         assert mva_list == []
 
     def test_mixed_valid_and_invalid(self):
         descriptions = ["59340120", "12345", "abcdefgh", "59340121r"]
-        manifest, mva_list = phase2_parse(descriptions, datetime(2026, 3, 5))
+        manifest, mva_list = parse_descriptions_to_manifest(descriptions, datetime(2026, 3, 5))
         assert len(manifest) == 2
         assert set(mva_list) == {"59340120", "59340121"}
 
     def test_special_characters(self):
-        manifest, mva_list = phase2_parse(["5934012!"], datetime(2026, 3, 5))
+        manifest, mva_list = parse_descriptions_to_manifest(["5934012!"], datetime(2026, 3, 5))
         assert manifest == {}
         assert mva_list == []
 
     def test_whitespace_only(self):
-        manifest, mva_list = phase2_parse(["   "], datetime(2026, 3, 5))
+        manifest, mva_list = parse_descriptions_to_manifest(["   "], datetime(2026, 3, 5))
         assert manifest == {}
         assert mva_list == []
 
     def test_invalid_suffix(self):
         """'x' is not a valid suffix — should be rejected."""
-        manifest, mva_list = phase2_parse(["59340120x"], datetime(2026, 3, 5))
+        manifest, mva_list = parse_descriptions_to_manifest(["59340120x"], datetime(2026, 3, 5))
         assert manifest == {}
         assert mva_list == []
