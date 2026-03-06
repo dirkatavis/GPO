@@ -53,13 +53,12 @@ SMTP_PORT = 587
 EMAIL_ACCOUNT = os.getenv("GLASS_EMAIL_ACCOUNT", "")
 EMAIL_PASSWORD = os.getenv("GLASS_EMAIL_PASSWORD", "")  # App password recommended
 SENDER_ADDRESS = os.getenv("GLASS_SENDER", "")
-NOTIFY_RECIPIENTS = os.getenv("GLASS_NOTIFY_RECIPIENTS", "").split(",")
 
+#These should be maintained via a ini or config file for easy modifications
+NOTIFY_RECIPIENTS = os.getenv("GLASS_NOTIFY_RECIPIENTS", "").split(",")
 TARGET_SENDER = "export@orcascan.com"
 MVA_PATTERN = re.compile(r"^(\d{8})([rc]*)$")
-
 LOCATION = "APO"
-
 COLUMNS = [
     "Arrival Date",
     "MVA",
@@ -71,6 +70,8 @@ COLUMNS = [
     "WorkItem",
 ]
 
+
+# The phase terminalogy should be seen as a design process but not an archetetual method
 # ─── Logging ──────────────────────────────────────────────────────────────────
 
 logging.basicConfig(
@@ -85,7 +86,10 @@ log = logging.getLogger("GlassOrchestrator")
 
 # ─── Phase 1 — Input (Inbound Acquisition) ───────────────────────────────────
 
-
+#Methods in general need to be function based not "phase" based.  This encourages re-usability
+# examples could be 
+# ConnectToEmailService() 'Might even want to create a class for this need
+# ParseEmail() 'Again seperate class might be benificial
 def phase1_input() -> tuple[list[str], datetime]:
     """
     Connect to Gmail via IMAP, fetch the latest UNSEEN email from the
@@ -141,7 +145,9 @@ def phase1_input() -> tuple[list[str], datetime]:
         except Exception:
             pass
 
-
+#  This seems like it should go into an email class
+# I hesitate to focus on a specific application as it makes the implimentation too tightly coupled.  
+# Assume the underlying programe like Orca will change
 def _extract_body(msg: email.message.Message) -> str:
     """Walk a MIME message and return the best body for parsing.
 
@@ -268,7 +274,7 @@ def _parse_html_descriptions(html: str) -> list[str]:
 
 # ─── Phase 2 — Parsing (Triage & Normalization) ──────────────────────────────
 
-
+# not phase based
 def phase2_parse(descriptions: list[str], email_date: datetime) -> tuple[dict, list[str]]:
     """
     Apply regex to each description string and build a session manifest.
@@ -291,9 +297,11 @@ def phase2_parse(descriptions: list[str], email_date: datetime) -> tuple[dict, l
 
         mva = match.group(1)
         suffixes = match.group(2)
+        # ideally make this configurable so we don't crack the code to make changes
 
         damage_type = "Repair" if "r" in suffixes else "Replacement"
-        claim = "Claim Generated" if "c" in suffixes else "Pending"
+        # Claim status values must match allowed UI options.
+        claim = "Listed" if "c" in suffixes else "Missing"
 
         manifest[mva] = {
             "Arrival Date": date_str,
@@ -314,7 +322,7 @@ def phase2_parse(descriptions: list[str], email_date: datetime) -> tuple[dict, l
 
 # ─── Phase 3 — Worker Processing (Enrichment) ────────────────────────────────
 
-
+# Not phase and make the methods action oriented with names that make sense
 def phase3_worker(mva_list: list[str]) -> None:
     """
     Write clean MVAs to the CSV interface file, then invoke the
@@ -338,7 +346,7 @@ def phase3_worker(mva_list: list[str]) -> None:
     )
     log.info("Phase 3: Worker completed successfully")
 
-
+# update name to be more ??
 def validate_results_freshness(results_path: Path, max_age_seconds: int = 300) -> None:
     """
     Verify that the results file was recently modified (by the current worker run).
@@ -357,7 +365,7 @@ def validate_results_freshness(results_path: Path, max_age_seconds: int = 300) -
 
 # ─── Phase 4 — Data Merge (Reconciliation) ───────────────────────────────────
 
-
+# phase...
 def phase4_merge(manifest: dict) -> pd.DataFrame:
     """
     Left-join the session manifest (Phase 2) with scraper output
@@ -427,7 +435,13 @@ def _get_worksheet():
     sh = gc.open_by_key(SPREADSHEET_ID)
     return sh.worksheet(SHEET_NAME)
 
-
+# phase.. Not descriptive
+# validating mva's and arrival date does not add a lot of values.  MVA are 
+# guarrentteed to be unique and we only perform this process once per day.  
+#im questioning the value of confirming mva/date
+# we might want to break this method up into multiple additional methods:
+# FindLatestRow()
+# InsertNewRow()
 def phase5_persist(df: pd.DataFrame) -> pd.DataFrame:
     """
     Append merged data to Google Sheet 'ATL_Data 2026 : GlassClaims'.
@@ -493,6 +507,7 @@ def _load_existing_keys(ws) -> set[str]:
                 existing_keys.add(key)
     except Exception as exc:
         log.warning("Could not read existing sheet data — %s", exc)
+        #This is a major problem and breaks the entire flow
     return existing_keys
 
 
@@ -548,7 +563,7 @@ def _build_html_table(df: pd.DataFrame) -> str:
             <td>{row['Location']}</td>
             <td>{row['Damage Type']}</td>
             <td>{row['Claim#']}</td>
-            <td>verified</td>
+            <td>{row['WorkItem']}</td>
         </tr>\n"""
 
     alert_banner = ""

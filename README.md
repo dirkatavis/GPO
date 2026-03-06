@@ -18,7 +18,7 @@ A modular Python pipeline for vehicle glass procurement, built on a **6-phase ar
 | Suffix | Field | Value | Default (no suffix) |
 |--------|-------|-------|---------------------|
 | `r` | Damage Type | Repair | Replacement |
-| `c` | Claim# | Claim Generated | Pending |
+| `c` | Claim# | Listed | Missing |
 
 ## Data Contract — `ATL_Data 2026 : GlassClaims`
 
@@ -33,7 +33,7 @@ Phase 5 inserts rows above the summary section; the idempotency key is **`MVA | 
 | 4 | **Make** | CGI scraper `Desc` column | 4 | Populated by Phase 4 merge |
 | 5 | **Location** | Constant `APO` | 2 | Always `APO` |
 | 6 | **Damage Type** | Suffix `r` → Repair | 2 | Default: `Replacement` |
-| 7 | **Claim#** | Suffix `c` → Claim Generated | 2 | Default: `Pending` |
+| 7 | **Claim#** | Suffix `c` → Listed | 2 | Default: `Missing` |
 | 8 | **WorkItem** | Pipeline flag | 2 | Always `verified` |
 
 ## Setup
