@@ -1,30 +1,33 @@
-"""
-GlassOrchestrator.py — 6-Phase Vehicle Glass Procurement Pipeline
+"""Vehicle glass procurement pipeline orchestrator.
 
-Phases:
-  1. Input       – Fetch scan data from Gmail (export@orcascan.com)
-  2. Parsing     – Regex triage, build session manifest
-  3. Worker      – Write CSV, invoke GlassDataParser.py subprocess
-  4. Data Merge  – Left-join manifest with scraper results
-  5. Persistence – Append to Google Sheet (idempotent)
-  6. Notification – HTML email for Replacement items
+Pipeline steps:
+    1. Fetch scan data from Gmail (export@orcascan.com)
+    2. Parse and normalize MVA entries
+    3. Invoke scraper worker subprocess
+    4. Merge scraper output with session manifest
+    5. Persist new rows to Google Sheet
+    6. Send replacement notifications
 """
 
 import csv
 import email
 import imaplib
+import json
 import logging
 import os
 import re
 import smtplib
 import subprocess
 import sys
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email.utils import getaddresses
 from pathlib import Path
+from typing import Any
 
-import gspread
+import gspread  # pylint: disable=import-error  # pyright: ignore[reportMissingImports]
 import pandas as pd
 
 try:
@@ -41,34 +44,104 @@ CSV_PATH = DATA_DIR / "GlassDataParser.csv"
 RESULTS_PATH = BASE_DIR / "GlassResults.txt"
 WORKER_SCRIPT = BASE_DIR / "CGI" / "src" / "GlassDataParser.py"
 
+ORCHESTRATOR_CONFIG_PATH = BASE_DIR / "orchestrator_config.json"
+
+
+def _load_runtime_config(config_path: Path) -> dict:
+    """Load runtime configuration from JSON with sane defaults."""
+    defaults = {
+        "service_account_json": "Service_account.json",
+        "spreadsheet_id": "YOUR_SPREADSHEET_ID_HERE",
+        "sheet_name": "GlassClaims",
+        "imap_server": "imap.gmail.com",
+        "smtp_server": "smtp.gmail.com",
+        "smtp_port": 587,
+        "target_sender": "export@orcascan.com",
+        "mva_pattern": r"^(\d{8})([rc]*)$",
+        "location": "APO",
+        "columns": [
+            "Arrival Date",
+            "MVA",
+            "VIN",
+            "Make",
+            "Location",
+            "Damage Type",
+            "Claim#",
+            "WorkItem",
+        ],
+        "notify_recipients": [],
+    }
+
+    if not config_path.exists():
+        return defaults
+
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            loaded = json.load(f)
+        if not isinstance(loaded, dict):
+            return defaults
+        merged = defaults.copy()
+        merged.update(loaded)
+        return merged
+    except (OSError, json.JSONDecodeError) as exc:
+        logging.getLogger("GlassOrchestrator").warning(
+            "Config load failed for %s; using defaults (%s)", config_path, exc
+        )
+        return defaults
+
+
+def _resolve_config_path(path_value: str) -> Path:
+    """Resolve relative config paths from BASE_DIR and keep absolute paths intact."""
+    path = Path(path_value)
+    if path.is_absolute():
+        return path
+    return BASE_DIR / path
+
+
+def _compile_regex_with_fallback(pattern_text: str, fallback_text: str) -> re.Pattern[str]:
+    """Compile regex from config; fall back to a known-safe pattern on error."""
+    try:
+        return re.compile(pattern_text)
+    except re.error as exc:
+        logging.getLogger("GlassOrchestrator").warning(
+            "Invalid regex in config (%s). Using fallback pattern.", exc
+        )
+        return re.compile(fallback_text)
+
+
+RUNTIME_CONFIG = _load_runtime_config(ORCHESTRATOR_CONFIG_PATH)
+
 # Google Sheets target
-SERVICE_ACCOUNT_JSON = BASE_DIR / "Service_account.json"
-SPREADSHEET_ID = "1eltlDO-nt-rBicbz_h3CmPc4g0TJNR9wFcsAw2ngNvs"
-SHEET_NAME = "GlassClaims"
+SERVICE_ACCOUNT_JSON = _resolve_config_path(str(RUNTIME_CONFIG["service_account_json"]))
+SPREADSHEET_ID = os.getenv("GLASS_SPREADSHEET_ID", str(RUNTIME_CONFIG["spreadsheet_id"]))
+SHEET_NAME = str(RUNTIME_CONFIG["sheet_name"])
+
+# Gmail/SMTP infrastructure endpoints
+IMAP_SERVER = str(RUNTIME_CONFIG["imap_server"])
+SMTP_SERVER = str(RUNTIME_CONFIG["smtp_server"])
+SMTP_PORT = int(RUNTIME_CONFIG["smtp_port"])
 
 # Gmail credentials — set via environment variables
-IMAP_SERVER = "imap.gmail.com"
-SMTP_SERVER = "smtp.gmail.com"
-SMTP_PORT = 587
 EMAIL_ACCOUNT = os.getenv("GLASS_EMAIL_ACCOUNT", "")
 EMAIL_PASSWORD = os.getenv("GLASS_EMAIL_PASSWORD", "")  # App password recommended
 SENDER_ADDRESS = os.getenv("GLASS_SENDER", "")
 
-#These should be maintained via a ini or config file for easy modifications
-NOTIFY_RECIPIENTS = os.getenv("GLASS_NOTIFY_RECIPIENTS", "").split(",")
-TARGET_SENDER = "export@orcascan.com"
-MVA_PATTERN = re.compile(r"^(\d{8})([rc]*)$")
-LOCATION = "APO"
-COLUMNS = [
-    "Arrival Date",
-    "MVA",
-    "VIN",
-    "Make",
-    "Location",
-    "Damage Type",
-    "Claim#",
-    "WorkItem",
-]
+# Runtime business/config values
+notify_recipients_env = os.getenv("GLASS_NOTIFY_RECIPIENTS", "").strip()
+if notify_recipients_env:
+    NOTIFY_RECIPIENTS = [x.strip() for x in notify_recipients_env.split(",") if x.strip()]
+else:
+    NOTIFY_RECIPIENTS = [
+        x.strip() for x in RUNTIME_CONFIG.get("notify_recipients", []) if isinstance(x, str) and x.strip()
+    ]
+
+TARGET_SENDER = str(RUNTIME_CONFIG["target_sender"])
+MVA_PATTERN = _compile_regex_with_fallback(
+    str(RUNTIME_CONFIG.get("mva_pattern", r"^(\d{8})([rc]*)$")),
+    r"^(\d{8})([rc]*)$",
+)
+LOCATION = str(RUNTIME_CONFIG["location"])
+COLUMNS = list(RUNTIME_CONFIG["columns"])
 
 
 # The phase terminalogy should be seen as a design process but not an archetetual method
@@ -84,78 +157,141 @@ logging.basicConfig(
 )
 log = logging.getLogger("GlassOrchestrator")
 
-# ─── Phase 1 — Input (Inbound Acquisition) ───────────────────────────────────
 
-#Methods in general need to be function based not "phase" based.  This encourages re-usability
-# examples could be 
-# ConnectToEmailService() 'Might even want to create a class for this need
-# ParseEmail() 'Again seperate class might be benificial
-def phase1_input() -> tuple[list[str], datetime]:
+@dataclass(frozen=True)
+class InboundEmail:
+    """Normalized inbound email data extracted from a MIME message."""
+    from_address: str
+    to_addresses: list[str]
+    subject: str
+    sent_at: datetime
+    body_text: str
+    body_html: str
+
+    @property
+    def best_body(self) -> str:
+        """Prefer HTML body when it contains tabular data, otherwise use plain text."""
+        if self.body_html and "<table" in self.body_html.lower():
+            return self.body_html
+        return self.body_text or self.body_html
+
+    @classmethod
+    def from_message(cls, msg: email.message.Message) -> "InboundEmail":
+        """Build a parsed email object from a MIME message."""
+        body_text, body_html = _extract_message_bodies(msg)
+        from_addresses = _extract_header_addresses(msg.get_all("From", []))
+        to_addresses = _extract_header_addresses(msg.get_all("To", []))
+        return cls(
+            from_address=from_addresses[0] if from_addresses else "",
+            to_addresses=to_addresses,
+            subject=msg.get("Subject", ""),
+            sent_at=_parse_email_datetime(msg.get("Date", "")),
+            body_text=body_text,
+            body_html=body_html,
+        )
+
+
+@dataclass(frozen=True)
+class OutboundEmail:
+    """Normalized outbound email payload used for SMTP delivery."""
+    subject: str
+    html_body: str
+    sender: str
+    recipients: list[str]
+
+# ─── Input Acquisition ────────────────────────────────────────────────────────
+
+def fetch_input_descriptions() -> tuple[list[str], datetime]:
     """
     Connect to Gmail via IMAP, fetch the latest UNSEEN email from the
     target sender, and extract:
       - A list of raw 'Description' strings (one per line in the body/CSV)
       - The Date header parsed as a datetime object
     """
-    log.info("PHASE 1 — Input: Connecting to Gmail IMAP …")
+    log.info("Input acquisition: Connecting to Gmail IMAP …")
 
-    mail = imaplib.IMAP4_SSL(IMAP_SERVER)
+    mail = _connect_to_inbox()
     try:
-        mail.login(EMAIL_ACCOUNT, EMAIL_PASSWORD)
-        mail.select("inbox")
-
-        search_criteria = f'(UNSEEN FROM "{TARGET_SENDER}")'
-        status, msg_ids = mail.search(None, search_criteria)
-        if status != "OK" or not msg_ids[0]:
-            log.warning("Phase 1: No unseen messages from %s", TARGET_SENDER)
+        unseen_ids = _find_unseen_message_ids(mail)
+        if not unseen_ids:
+            log.warning("Input: No unseen messages from %s", TARGET_SENDER)
             return [], datetime.now()
 
-        ids = msg_ids[0].split()
-        log.info("Phase 1: Found %d unseen message(s)", len(ids))
-
-        # Process only the latest message
-        latest_id = ids[-1]
-        status, msg_data = mail.fetch(latest_id, "(RFC822)")
-        if status != "OK":
-            raise RuntimeError(f"Failed to fetch message id {latest_id}")
-
-        raw_email = msg_data[0][1]
-        msg = email.message_from_bytes(raw_email)
-
-        # Parse date
-        date_str = msg.get("Date", "")
-        email_date = email.utils.parsedate_to_datetime(date_str) if date_str else datetime.now()
-        log.info("Phase 1: Email date = %s", email_date.isoformat())
-
-        # Extract body
-        body = _extract_body(msg)
-        # Try HTML table extraction first, then fall back to CSV/plain-text
-        if "<table" in body.lower():
-            descriptions = _parse_html_descriptions(body)
-        else:
-            descriptions = _parse_descriptions(body)
-        log.info("Phase 1: Extracted %d description lines", len(descriptions))
-
-        # Mark as Seen (IMAP already marks on FETCH unless PEEK is used)
-        return descriptions, email_date
+        log.info("Input: Found %d unseen message(s)", len(unseen_ids))
+        latest_message = _fetch_message_by_id(mail, unseen_ids[-1])
+        return _extract_descriptions_from_message(latest_message)
 
     finally:
         try:
             mail.logout()
-        except Exception:
+        except (imaplib.IMAP4.error, OSError):
             pass
 
-#  This seems like it should go into an email class
-# I hesitate to focus on a specific application as it makes the implimentation too tightly coupled.  
-# Assume the underlying programe like Orca will change
-def _extract_body(msg: email.message.Message) -> str:
-    """Walk a MIME message and return the best body for parsing.
 
-    Orca Scan emails contain an HTML table with structured data and a
-    plain-text CSV attachment.  We prefer the HTML when it contains a
-    <table> because the CSV embeds newlines inside quoted fields which
-    break simple line-by-line parsing.
-    """
+def _connect_to_inbox() -> imaplib.IMAP4_SSL:
+    """Open IMAP connection, authenticate, and select inbox."""
+    mail = imaplib.IMAP4_SSL(IMAP_SERVER)
+    mail.login(EMAIL_ACCOUNT, EMAIL_PASSWORD)
+    mail.select("inbox")
+    return mail
+
+
+def _find_unseen_message_ids(mail: imaplib.IMAP4_SSL) -> list[bytes]:
+    """Return unseen message IDs for the configured target sender."""
+    search_criteria = f'(UNSEEN FROM "{TARGET_SENDER}")'
+    status, msg_ids = mail.search(None, search_criteria)
+    if status != "OK" or not msg_ids or not msg_ids[0]:
+        return []
+    return msg_ids[0].split()
+
+
+def _fetch_message_by_id(mail: imaplib.IMAP4_SSL, message_id: bytes) -> email.message.Message:
+    """Fetch and decode a single RFC822 message by IMAP id."""
+    status, msg_data = mail.fetch(message_id, "(RFC822)")
+    if status != "OK" or not msg_data or not msg_data[0]:
+        raise RuntimeError(f"Failed to fetch message id {message_id}")
+
+    raw_email = msg_data[0][1]
+    if not raw_email:
+        raise RuntimeError(f"Empty message payload for id {message_id}")
+    return email.message_from_bytes(raw_email)
+
+
+def _extract_descriptions_from_message(msg: email.message.Message) -> tuple[list[str], datetime]:
+    """Extract parsed descriptions and parsed email datetime from a MIME message."""
+    return _extract_descriptions_from_email(InboundEmail.from_message(msg))
+
+
+def _extract_descriptions_from_email(parsed_email: InboundEmail) -> tuple[list[str], datetime]:
+    """Extract parsed descriptions and email datetime from normalized email data."""
+    log.info("Input: Email date = %s", parsed_email.sent_at.isoformat())
+
+    body = parsed_email.best_body
+    if "<table" in body.lower():
+        descriptions = _parse_html_descriptions(body)
+    else:
+        descriptions = _parse_descriptions(body)
+    log.info("Input: Extracted %d description lines", len(descriptions))
+    return descriptions, parsed_email.sent_at
+
+
+def _parse_email_datetime(date_str: str) -> datetime:
+    """Parse email Date header into datetime, falling back to current time."""
+    if not date_str:
+        return datetime.now()
+    try:
+        return email.utils.parsedate_to_datetime(date_str)
+    except (TypeError, ValueError):
+        return datetime.now()
+
+
+def _extract_header_addresses(header_values: list[str]) -> list[str]:
+    """Extract email addresses from RFC822 header values."""
+    return [addr for _, addr in getaddresses(header_values) if addr]
+
+
+def _extract_message_bodies(msg: email.message.Message) -> tuple[str, str]:
+    """Extract plain and html bodies from a MIME message."""
     plain = ""
     html = ""
     if msg.is_multipart():
@@ -178,10 +314,20 @@ def _extract_body(msg: email.message.Message) -> str:
                 html = decoded
             else:
                 plain = decoded
-    # Prefer HTML when it contains a data table (Orca Scan format)
-    if html and "<table" in html.lower():
-        return html
-    return plain or html
+    return plain, html
+
+def _extract_body(msg: email.message.Message) -> str:
+    """Walk a MIME message and return the best body for parsing.
+
+    Orca Scan emails contain an HTML table with structured data and a
+    plain-text CSV attachment.  We prefer the HTML when it contains a
+    <table> because the CSV embeds newlines inside quoted fields which
+    break simple line-by-line parsing.
+    """
+    body_text, body_html = _extract_message_bodies(msg)
+    if body_html and "<table" in body_html.lower():
+        return body_html
+    return body_text or body_html
 
 
 def _parse_descriptions(body: str) -> list[str]:
@@ -208,74 +354,109 @@ def _parse_html_descriptions(html: str) -> list[str]:
     Uses BeautifulSoup if available, otherwise falls back to regex.
     """
     if HAS_BS4:
-        soup = BeautifulSoup(html, "html.parser")
-        # Prefer the data table (id="rowData") over layout tables
-        table = soup.find("table", id="rowData") or soup.find("table")
-        if not table:
-            return []
-        rows = table.find_all("tr")
-        if not rows:
-            return []
-        # Find Description column index from header row
-        headers = [th.get_text(strip=True) for th in rows[0].find_all(["th", "td"])]
-        if "Description" not in headers:
-            return []
-        desc_idx = headers.index("Description")
-        descriptions = []
-        for row in rows[1:]:
-            cells = row.find_all("td")
-            if len(cells) > desc_idx:
-                # Orca Scan packs multiple MVAs into one cell separated by newlines
-                raw = cells[desc_idx].get_text(separator="\n", strip=False)
-                for line in raw.splitlines():
-                    line = line.strip()
-                    if line:
-                        descriptions.append(line)
-        return descriptions
-    else:
-        # Regex fallback: extract td contents from rows
-        # Try to isolate the data table (id="rowData") first
-        table_match = re.search(
-            r'<table[^>]*id=["\']rowData["\'][^>]*>(.*?)</table>',
-            html, re.DOTALL | re.IGNORECASE,
-        )
-        search_html = table_match.group(1) if table_match else html
-        # Find header row to locate Description column
-        header_match = re.search(
-            r"<tr[^>]*>(.*?)</tr>", search_html, re.DOTALL | re.IGNORECASE
-        )
-        if not header_match:
-            return []
-        header_cells = re.findall(
-            r"<t[hd][^>]*>(.*?)</t[hd]>", header_match.group(1), re.DOTALL | re.IGNORECASE
-        )
-        header_cells = [re.sub(r"<[^>]+>", "", c).strip() for c in header_cells]
-        if "Description" not in header_cells:
-            return []
-        desc_idx = header_cells.index("Description")
-        # Extract data rows
-        all_rows = re.findall(
-            r"<tr[^>]*>(.*?)</tr>", search_html, re.DOTALL | re.IGNORECASE
-        )
-        descriptions = []
-        for row_html in all_rows[1:]:  # skip header
-            cells = re.findall(
-                r"<td[^>]*>(.*?)</td>", row_html, re.DOTALL | re.IGNORECASE
-            )
-            cells = [re.sub(r"<[^>]+>", "", c).strip() for c in cells]
-            if len(cells) > desc_idx and cells[desc_idx]:
-                # Split multi-line cell into individual MVAs
-                for line in cells[desc_idx].splitlines():
-                    line = line.strip()
-                    if line:
-                        descriptions.append(line)
-        return descriptions
+        return _parse_html_descriptions_bs4(html)
+
+    return _parse_html_descriptions_regex(html)
 
 
-# ─── Phase 2 — Parsing (Triage & Normalization) ──────────────────────────────
+def _parse_html_descriptions_bs4(html: str) -> list[str]:
+    """Parse Description values from Orca Scan HTML using BeautifulSoup."""
+    soup = BeautifulSoup(html, "html.parser")
+    table = _find_primary_table_bs4(soup)
+    if not table:
+        return []
+
+    rows = table.find_all("tr")
+    if not rows:
+        return []
+
+    desc_idx = _get_description_index_from_cells(
+        [th.get_text(strip=True) for th in rows[0].find_all(["th", "td"])]
+    )
+    if desc_idx is None:
+        return []
+
+    descriptions: list[str] = []
+    for row in rows[1:]:
+        cells = row.find_all("td")
+        if len(cells) <= desc_idx:
+            continue
+        raw = cells[desc_idx].get_text(separator="\n", strip=False)
+        descriptions.extend(_split_non_empty_lines(raw))
+    return descriptions
+
+
+def _find_primary_table_bs4(soup: Any) -> Any | None:
+    """Prefer rowData table and fall back to first table."""
+    return soup.find("table", id="rowData") or soup.find("table")
+
+
+def _parse_html_descriptions_regex(html: str) -> list[str]:
+    """Parse Description values from Orca Scan HTML using regex fallback."""
+    search_html = _row_data_extractor(html)
+    header_cells = _extract_header_cells_regex(search_html)
+    if not header_cells:
+        return []
+
+    desc_idx = _get_description_index_from_cells(header_cells)
+    if desc_idx is None:
+        return []
+
+    descriptions: list[str] = []
+    all_rows = re.findall(
+        r"<tr[^>]*>(.*?)</tr>", search_html, re.DOTALL | re.IGNORECASE
+    )
+    for row_html in all_rows[1:]:  # skip header
+        cells = re.findall(
+            r"<td[^>]*>(.*?)</td>", row_html, re.DOTALL | re.IGNORECASE
+        )
+        normalized_cells = [re.sub(r"<[^>]+>", "", c).strip() for c in cells]
+        if len(normalized_cells) <= desc_idx or not normalized_cells[desc_idx]:
+            continue
+        descriptions.extend(_split_non_empty_lines(normalized_cells[desc_idx]))
+    return descriptions
+
+
+def _row_data_extractor(html: str) -> str:
+    """Return rowData table HTML body when present; otherwise return full HTML."""
+    table_match = re.search(
+        r'<table[^>]*id=["\']rowData["\'][^>]*>(.*?)</table>',
+        html,
+        re.DOTALL | re.IGNORECASE,
+    )
+    return table_match.group(1) if table_match else html
+
+
+def _extract_header_cells_regex(search_html: str) -> list[str]:
+    """Extract normalized header cell texts from first row using regex."""
+    header_match = re.search(
+        r"<tr[^>]*>(.*?)</tr>", search_html, re.DOTALL | re.IGNORECASE
+    )
+    if not header_match:
+        return []
+
+    header_cells = re.findall(
+        r"<t[hd][^>]*>(.*?)</t[hd]>", header_match.group(1), re.DOTALL | re.IGNORECASE
+    )
+    return [re.sub(r"<[^>]+>", "", c).strip() for c in header_cells]
+
+
+def _get_description_index_from_cells(cells: list[str]) -> int | None:
+    """Return Description column index if present in header cells."""
+    if "Description" not in cells:
+        return None
+    return cells.index("Description")
+
+
+def _split_non_empty_lines(raw_text: str) -> list[str]:
+    """Split text by lines and return only non-empty trimmed lines."""
+    return [line.strip() for line in raw_text.splitlines() if line.strip()]
+
+
+# ─── Parsing & Normalization ─────────────────────────────────────────────────
 
 # not phase based
-def phase2_parse(descriptions: list[str], email_date: datetime) -> tuple[dict, list[str]]:
+def parse_descriptions_to_manifest(descriptions: list[str], email_date: datetime) -> tuple[dict, list[str]]:
     """
     Apply regex to each description string and build a session manifest.
 
@@ -283,7 +464,7 @@ def phase2_parse(descriptions: list[str], email_date: datetime) -> tuple[dict, l
         manifest: dict keyed by MVA → {WorkType, ClaimStatus, Description, Date, Location}
         mva_list: list of clean 8-digit MVA strings for the worker
     """
-    log.info("PHASE 2 — Parsing: Processing %d descriptions …", len(descriptions))
+    log.info("Parsing: Processing %d descriptions …", len(descriptions))
 
     manifest: dict[str, dict] = {}
     mva_list: list[str] = []
@@ -292,7 +473,7 @@ def phase2_parse(descriptions: list[str], email_date: datetime) -> tuple[dict, l
     for desc in descriptions:
         match = MVA_PATTERN.match(desc.strip())
         if not match:
-            log.warning("Phase 2: Malformed entry skipped — '%s'", desc)
+            log.warning("Parsing: Malformed entry skipped — '%s'", desc)
             continue
 
         mva = match.group(1)
@@ -306,8 +487,8 @@ def phase2_parse(descriptions: list[str], email_date: datetime) -> tuple[dict, l
         manifest[mva] = {
             "Arrival Date": date_str,
             "MVA": mva,
-            "VIN": "",       # Populated in Phase 4
-            "Make": "",      # Populated in Phase 4 from GlassResults Desc
+            "VIN": "",       # Populated during merge step
+            "Make": "",      # Populated during merge from GlassResults Desc
             "Location": LOCATION,
             "Damage Type": damage_type,
             "Claim#": claim,
@@ -315,22 +496,22 @@ def phase2_parse(descriptions: list[str], email_date: datetime) -> tuple[dict, l
         }
         mva_list.append(mva)
 
-    log.info("Phase 2: Manifest built — %d valid MVAs, %d malformed",
+    log.info("Parsing: Manifest built — %d valid MVAs, %d malformed",
              len(manifest), len(descriptions) - len(manifest))
     return manifest, mva_list
 
 
-# ─── Phase 3 — Worker Processing (Enrichment) ────────────────────────────────
+# ─── Worker Processing ────────────────────────────────────────────────────────
 
 # Not phase and make the methods action oriented with names that make sense
-def phase3_worker(mva_list: list[str]) -> None:
+def parse_glass_data_results(mva_list: list[str]) -> None:
     """
     Write clean MVAs to the CSV interface file, then invoke the
     external GlassDataParser.py worker as a subprocess.
 
     Raises subprocess.CalledProcessError on worker failure.
     """
-    log.info("PHASE 3 — Worker: Writing %d MVAs to %s …", len(mva_list), CSV_PATH)
+    log.info("Worker: Writing %d MVAs to %s …", len(mva_list), CSV_PATH)
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     with open(CSV_PATH, "w", newline="", encoding="utf-8") as f:
@@ -339,12 +520,12 @@ def phase3_worker(mva_list: list[str]) -> None:
         for mva in mva_list:
             writer.writerow([mva])
 
-    log.info("Phase 3: Invoking worker subprocess — %s", WORKER_SCRIPT)
+    log.info("Worker: Invoking worker subprocess — %s", WORKER_SCRIPT)
     subprocess.check_call(
         [sys.executable, str(WORKER_SCRIPT)],
         cwd=str(BASE_DIR),
     )
-    log.info("Phase 3: Worker completed successfully")
+    log.info("Worker: Completed successfully")
 
 # update name to be more ??
 def validate_results_freshness(results_path: Path, max_age_seconds: int = 300) -> None:
@@ -363,17 +544,17 @@ def validate_results_freshness(results_path: Path, max_age_seconds: int = 300) -
         )
 
 
-# ─── Phase 4 — Data Merge (Reconciliation) ───────────────────────────────────
+# ─── Data Reconciliation ──────────────────────────────────────────────────────
 
 # phase...
-def phase4_merge(manifest: dict) -> pd.DataFrame:
+def merge_manifest_with_results(manifest: dict) -> pd.DataFrame:
     """
-    Left-join the session manifest (Phase 2) with scraper output
-    (GlassResults.txt from Phase 3).
+    Left-join the session manifest with scraper output
+    (GlassResults.txt from worker execution).
 
     Any scanned MVA without a scraper match keeps VIN='N/A'.
     """
-    log.info("PHASE 4 — Merge: Reconciling manifest with scraper results …")
+    log.info("Merge: Reconciling manifest with scraper results …")
 
     # Build manifest DataFrame
     df_manifest = pd.DataFrame(list(manifest.values()))
@@ -392,7 +573,7 @@ def phase4_merge(manifest: dict) -> pd.DataFrame:
         result_cols = [c for c in ["MVA", "VIN", "Desc"] if c in df_results.columns]
         df_results = df_results[result_cols]
     else:
-        log.warning("Phase 4: %s not found — all VINs will be N/A", RESULTS_PATH)
+        log.warning("Merge: %s not found — all VINs will be N/A", RESULTS_PATH)
         df_results = pd.DataFrame(columns=["MVA", "VIN"])
 
     # Prepare columns for left join
@@ -422,11 +603,11 @@ def phase4_merge(manifest: dict) -> pd.DataFrame:
     df_merged = df_merged[COLUMNS]
 
     n_missing = (df_merged["VIN"] == "N/A").sum()
-    log.info("Phase 4: Merge complete — %d rows, %d missing VINs", len(df_merged), n_missing)
+    log.info("Merge: Complete — %d rows, %d missing VINs", len(df_merged), n_missing)
     return df_merged
 
 
-# ─── Phase 5 — Persistence (System of Record) ────────────────────────────────
+# ─── Persistence ───────────────────────────────────────────────────────────────
 
 
 def _get_worksheet():
@@ -442,7 +623,7 @@ def _get_worksheet():
 # we might want to break this method up into multiple additional methods:
 # FindLatestRow()
 # InsertNewRow()
-def phase5_persist(df: pd.DataFrame) -> pd.DataFrame:
+def persist_new_rows(df: pd.DataFrame) -> pd.DataFrame:
     """
     Append merged data to Google Sheet 'ATL_Data 2026 : GlassClaims'.
 
@@ -452,38 +633,50 @@ def phase5_persist(df: pd.DataFrame) -> pd.DataFrame:
 
     Returns the DataFrame of actually-new rows written.
     """
-    log.info("PHASE 5 — Persistence: Appending to Google Sheet [%s] …", SHEET_NAME)
+    log.info("Persistence: Appending to Google Sheet [%s] …", SHEET_NAME)
 
     ws = _get_worksheet()
 
     # Determine which rows are truly new
     existing_keys = _load_existing_keys(ws)
-
-    df["_key"] = df["MVA"] + "|" + df["Arrival Date"]
-    new_rows = df[~df["_key"].isin(existing_keys)].drop(columns=["_key"]).copy()
-    df.drop(columns=["_key"], inplace=True)
+    new_rows = _filter_new_rows(df, existing_keys)
 
     if new_rows.empty:
-        log.info("Phase 5: No new rows to write (all duplicates)")
+        log.info("Persistence: No new rows to write (all duplicates)")
         return new_rows
 
     # Find the insertion point: first empty row after last data row (column B = MVA)
+    insert_row = _find_insert_row(ws)
+
+    # Build rows as lists matching the 8-column contract
+    rows_to_insert = _rows_from_dataframe(new_rows)
+
+    # Insert rows above the summary section (pushes summary down automatically)
+    ws.insert_rows(rows_to_insert, row=insert_row)
+
+    log.info("Persistence: Wrote %d new rows to Google Sheet at row %d", len(new_rows), insert_row)
+    return new_rows
+
+
+def _filter_new_rows(df: pd.DataFrame, existing_keys: set[str]) -> pd.DataFrame:
+    """Return only rows not already present in the sheet (MVA|Arrival Date key)."""
+    df_with_keys = df.assign(_key=df["MVA"] + "|" + df["Arrival Date"])
+    return df_with_keys[~df_with_keys["_key"].isin(existing_keys)].drop(columns=["_key"]).copy()
+
+
+def _find_insert_row(ws) -> int:
+    """Return the first row after existing data where new rows should be inserted."""
     all_vals = ws.get_all_values()
     insert_row = 2  # default: right after header
     for i, row in enumerate(all_vals):
         if len(row) > 1 and row[1].strip():  # column B has MVA
             insert_row = i + 2  # next row (1-indexed)
+    return insert_row
 
-    # Build rows as lists matching the 8-column contract
-    rows_to_insert = []
-    for _, row in new_rows.iterrows():
-        rows_to_insert.append([row[col] for col in COLUMNS])
 
-    # Insert rows above the summary section (pushes summary down automatically)
-    ws.insert_rows(rows_to_insert, row=insert_row)
-
-    log.info("Phase 5: Wrote %d new rows to Google Sheet at row %d", len(new_rows), insert_row)
-    return new_rows
+def _rows_from_dataframe(df: pd.DataFrame) -> list[list[str]]:
+    """Build sheet row payloads in the canonical column order."""
+    return [[row[col] for col in COLUMNS] for _, row in df.iterrows()]
 
 
 def _load_existing_keys(ws) -> set[str]:
@@ -505,7 +698,7 @@ def _load_existing_keys(ws) -> set[str]:
             if len(row) > max(mva_idx, date_idx) and row[mva_idx].strip():
                 key = f"{row[mva_idx]}|{row[date_idx]}"
                 existing_keys.add(key)
-    except Exception as exc:
+    except (AttributeError, KeyError, TypeError, ValueError, OSError) as exc:
         log.warning("Could not read existing sheet data — %s", exc)
         #This is a major problem and breaks the entire flow
     return existing_keys
@@ -516,27 +709,32 @@ def is_duplicate(mva: str, date: str, existing_keys: set[str]) -> bool:
     return f"{mva}|{date}" in existing_keys
 
 
-# ─── Phase 6 — Notification (Distribution) ───────────────────────────────────
+# ─── Notification ─────────────────────────────────────────────────────────────
 
 
-def phase6_notify(df: pd.DataFrame) -> None:
+def notify_replacement_items(df: pd.DataFrame) -> None:
     """
     Filter for Replacement items, build an HTML email with a styled table,
     and send it. Rows with VIN='N/A' are highlighted red to flag the
     ordering team for manual action.
     """
-    log.info("PHASE 6 — Notification: Building replacement alert …")
+    log.info("Notification: Building replacement alert …")
 
     replacements = df[df["Damage Type"] == "Replacement"]
     if replacements.empty:
-        log.info("Phase 6: No Replacement items — skipping notification")
+        log.info("Notification: No Replacement items — skipping")
         return
 
     html = _build_html_table(replacements)
     subject = f"Glass Replacement Order — {replacements.iloc[0]['Arrival Date']} ({len(replacements)} items)"
-
-    _send_email(subject, html)
-    log.info("Phase 6: Notification sent to %s", NOTIFY_RECIPIENTS)
+    outbound = OutboundEmail(
+        subject=subject,
+        html_body=html,
+        sender=SENDER_ADDRESS,
+        recipients=NOTIFY_RECIPIENTS,
+    )
+    _send_email(outbound)
+    log.info("Notification: Sent to %s", NOTIFY_RECIPIENTS)
 
 
 def _build_html_table(df: pd.DataFrame) -> str:
@@ -611,94 +809,97 @@ def _build_html_table(df: pd.DataFrame) -> str:
     """
 
 
-def _send_email(subject: str, html_body: str) -> None:
-    """Send an HTML email via Gmail SMTP."""
-    if not SENDER_ADDRESS or not NOTIFY_RECIPIENTS[0]:
-        log.warning("Phase 6: Email credentials not configured — printing HTML to log")
-        log.info("Subject: %s", subject)
+def _send_email(message: OutboundEmail) -> None:
+    """Send an outbound HTML email via Gmail SMTP."""
+    if not message.sender or not message.recipients:
+        log.warning("Notification: Email credentials not configured — printing subject only")
+        log.info("Subject: %s", message.subject)
         return
 
     msg = MIMEMultipart("alternative")
-    msg["Subject"] = subject
-    msg["From"] = SENDER_ADDRESS
-    msg["To"] = ", ".join(NOTIFY_RECIPIENTS)
-    msg.attach(MIMEText(html_body, "html"))
+    msg["Subject"] = message.subject
+    msg["From"] = message.sender
+    msg["To"] = ", ".join(message.recipients)
+    msg.attach(MIMEText(message.html_body, "html"))
 
     with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
         server.ehlo()
         server.starttls()
         server.login(EMAIL_ACCOUNT, EMAIL_PASSWORD)
-        server.sendmail(SENDER_ADDRESS, NOTIFY_RECIPIENTS, msg.as_string())
+        server.sendmail(message.sender, message.recipients, msg.as_string())
 
 
 # ─── Pipeline Orchestrator ────────────────────────────────────────────────────
 
 
 def run_pipeline() -> None:
-    """Execute the full 6-phase pipeline with phase-level error handling."""
+    """Execute the end-to-end pipeline with step-level error handling."""
+    # Broad exception handling is intentional here to fail-fast by stage
+    # while preserving a stable top-level orchestrator process.
+    # pylint: disable=broad-exception-caught
     log.info("=" * 60)
     log.info("GlassOrchestrator pipeline starting")
     log.info("=" * 60)
 
-    # ── Phase 1: Input ────────────────────────────────────────
+    # Step 1: Input acquisition
     try:
-        descriptions, email_date = phase1_input()
+        descriptions, email_date = fetch_input_descriptions()
     except Exception as exc:
-        log.error("PHASE 1 FAILED — %s", exc, exc_info=True)
+        log.error("Input acquisition failed — %s", exc, exc_info=True)
         return
 
     if not descriptions:
         log.info("Pipeline complete — no descriptions to process")
         return
 
-    # ── Phase 2: Parsing ──────────────────────────────────────
+    # Step 2: Parsing
     try:
-        manifest, mva_list = phase2_parse(descriptions, email_date)
+        manifest, mva_list = parse_descriptions_to_manifest(descriptions, email_date)
     except Exception as exc:
-        log.error("PHASE 2 FAILED — %s", exc, exc_info=True)
+        log.error("Parsing failed — %s", exc, exc_info=True)
         return
 
     if not manifest:
         log.info("Pipeline complete — no valid MVAs after parsing")
         return
 
-    # ── Phase 3: Worker ───────────────────────────────────────
+    # Step 3: Worker
     try:
-        phase3_worker(mva_list)
+        parse_glass_data_results(mva_list)
     except subprocess.CalledProcessError as exc:
-        log.error("PHASE 3 FAILED — Worker returned non-zero exit code %d. "
+        log.error("Worker failed — non-zero exit code %d. "
                    "Pipeline ABORTED. No data will be persisted.", exc.returncode)
         return
     except Exception as exc:
-        log.error("PHASE 3 FAILED — %s. Pipeline ABORTED.", exc, exc_info=True)
+        log.error("Worker failed — %s. Pipeline ABORTED.", exc, exc_info=True)
         return
 
-    # ── Phase 3b: Validate freshness of results ───────────────
+    # Step 4: Validate worker output freshness
     try:
         validate_results_freshness(RESULTS_PATH)
     except RuntimeError as exc:
-        log.error("PHASE 3 VALIDATION FAILED — %s. Pipeline ABORTED.", exc)
+        log.error("Worker output validation failed — %s. Pipeline ABORTED.", exc)
         return
 
-    # ── Phase 4: Data Merge ───────────────────────────────────
+    # Step 5: Merge
     try:
-        df_merged = phase4_merge(manifest)
+        df_merged = merge_manifest_with_results(manifest)
     except Exception as exc:
-        log.error("PHASE 4 FAILED — %s", exc, exc_info=True)
+        log.error("Merge failed — %s", exc, exc_info=True)
         return
 
-    # ── Phase 5: Persistence ──────────────────────────────────
+    # Step 6: Persist
     try:
-        new_rows = phase5_persist(df_merged)
+        log.info("Persistence: %d new row(s) written", len(persist_new_rows(df_merged)))
     except Exception as exc:
-        log.error("PHASE 5 FAILED — %s", exc, exc_info=True)
+        log.error("Persistence failed — %s", exc, exc_info=True)
         return
 
-    # ── Phase 6: Notification ─────────────────────────────────
+    # Step 7: Notify
     try:
-        phase6_notify(df_merged)
+        notify_replacement_items(df_merged)
     except Exception as exc:
-        log.error("PHASE 6 FAILED — %s", exc, exc_info=True)
+        log.error("Notification failed — %s", exc, exc_info=True)
         # Notification failure should not lose data; log and continue
         return
 

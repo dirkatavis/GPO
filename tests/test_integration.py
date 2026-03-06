@@ -25,9 +25,9 @@ from GlassOrchestrator import (
     IMAP_SERVER,
     SHEET_NAME,
     TARGET_SENDER,
-    phase2_parse,
-    phase4_merge,
-    phase5_persist,
+    parse_descriptions_to_manifest,
+    merge_manifest_with_results,
+    persist_new_rows,
 )
 
 
@@ -109,18 +109,18 @@ class TestIT3_MergeReconciliation:
 
     def test_left_join_with_missing_mva(self, tmp_path, monkeypatch):
         """One MVA present in results, one missing → VIN=N/A for missing."""
-        # Build manifest from Phase 2
+        # Build manifest from parsing step
         descriptions = ["59340120", "59340121"]
-        manifest, _ = phase2_parse(descriptions, datetime(2026, 3, 5))
+        manifest, _ = parse_descriptions_to_manifest(descriptions, datetime(2026, 3, 5))
 
         # Create a mock GlassResults.txt with only ONE of the two MVAs
         results_file = tmp_path / "GlassResults.txt"
         results_file.write_text("MVA,VIN,Desc\n59340120,1HGCM82633A004352,Windshield\n")
 
-        # Patch the RESULTS_PATH used by phase4_merge
+        # Patch the RESULTS_PATH used by merge step
         monkeypatch.setattr("GlassOrchestrator.RESULTS_PATH", results_file)
 
-        df = phase4_merge(manifest)
+        df = merge_manifest_with_results(manifest)
 
         assert len(df) == 2  # Both MVAs must be present (no drop)
         row_120 = df[df["MVA"] == "59340120"].iloc[0]
@@ -132,14 +132,14 @@ class TestIT3_MergeReconciliation:
     def test_all_mvas_missing_from_results(self, tmp_path, monkeypatch):
         """No scraper results at all → all VINs become N/A."""
         descriptions = ["59340120", "59340121"]
-        manifest, _ = phase2_parse(descriptions, datetime(2026, 3, 5))
+        manifest, _ = parse_descriptions_to_manifest(descriptions, datetime(2026, 3, 5))
 
         results_file = tmp_path / "GlassResults.txt"
         results_file.write_text("MVA,VIN,Desc\n")  # header only
 
         monkeypatch.setattr("GlassOrchestrator.RESULTS_PATH", results_file)
 
-        df = phase4_merge(manifest)
+        df = merge_manifest_with_results(manifest)
 
         assert len(df) == 2
         assert (df["VIN"] == "N/A").all()
@@ -147,11 +147,11 @@ class TestIT3_MergeReconciliation:
     def test_results_file_missing(self, tmp_path, monkeypatch):
         """No GlassResults.txt file → degrade gracefully, all VINs = N/A."""
         descriptions = ["59340120"]
-        manifest, _ = phase2_parse(descriptions, datetime(2026, 3, 5))
+        manifest, _ = parse_descriptions_to_manifest(descriptions, datetime(2026, 3, 5))
 
         monkeypatch.setattr("GlassOrchestrator.RESULTS_PATH", tmp_path / "nonexistent.txt")
 
-        df = phase4_merge(manifest)
+        df = merge_manifest_with_results(manifest)
         assert len(df) == 1
         assert df.iloc[0]["VIN"] == "N/A"
 
@@ -194,7 +194,7 @@ class TestIT4_SpreadsheetPersistence:
         mock_get_ws.return_value = ws
 
         df = self._make_test_df(["59340120", "59340121"])
-        new_rows = phase5_persist(df)
+        new_rows = persist_new_rows(df)
 
         assert len(new_rows) == 2
         ws.insert_rows.assert_called_once()
@@ -212,7 +212,7 @@ class TestIT4_SpreadsheetPersistence:
         mock_get_ws.return_value = ws
 
         df = self._make_test_df(["59340121"])
-        new_rows = phase5_persist(df)
+        new_rows = persist_new_rows(df)
 
         assert len(new_rows) == 1
         ws.insert_rows.assert_called_once()
@@ -228,7 +228,7 @@ class TestIT4_SpreadsheetPersistence:
         mock_get_ws.return_value = ws
 
         df = self._make_test_df(["59340120"])
-        new_rows = phase5_persist(df)
+        new_rows = persist_new_rows(df)
 
         assert len(new_rows) == 0
         ws.insert_rows.assert_not_called()
@@ -240,7 +240,7 @@ class TestIT4_SpreadsheetPersistence:
         mock_get_ws.return_value = ws
 
         df = self._make_test_df(["59340120"])
-        phase5_persist(df)
+        persist_new_rows(df)
 
         written = ws.insert_rows.call_args[0][0]
         assert written[0] == ["03/05/2026", "59340120", "1HGCM82633A004352",
