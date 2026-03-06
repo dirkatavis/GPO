@@ -25,6 +25,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import getaddresses
 from pathlib import Path
+from typing import Any
 
 import gspread  # pylint: disable=import-error  # pyright: ignore[reportMissingImports]
 import pandas as pd
@@ -50,13 +51,13 @@ def _load_runtime_config(config_path: Path) -> dict:
     """Load runtime configuration from JSON with sane defaults."""
     defaults = {
         "service_account_json": "Service_account.json",
-        "spreadsheet_id": "1eltlDO-nt-rBicbz_h3CmPc4g0TJNR9wFcsAw2ngNvs",
+        "spreadsheet_id": "YOUR_SPREADSHEET_ID_HERE",
         "sheet_name": "GlassClaims",
         "imap_server": "imap.gmail.com",
         "smtp_server": "smtp.gmail.com",
         "smtp_port": 587,
         "target_sender": "export@orcascan.com",
-        "mva_pattern": r"^(\\d{8})([rc]*)$",
+        "mva_pattern": r"^(\d{8})([rc]*)$",
         "location": "APO",
         "columns": [
             "Arrival Date",
@@ -112,7 +113,7 @@ RUNTIME_CONFIG = _load_runtime_config(ORCHESTRATOR_CONFIG_PATH)
 
 # Google Sheets target
 SERVICE_ACCOUNT_JSON = _resolve_config_path(str(RUNTIME_CONFIG["service_account_json"]))
-SPREADSHEET_ID = str(RUNTIME_CONFIG["spreadsheet_id"])
+SPREADSHEET_ID = os.getenv("GLASS_SPREADSHEET_ID", str(RUNTIME_CONFIG["spreadsheet_id"]))
 SHEET_NAME = str(RUNTIME_CONFIG["sheet_name"])
 
 # Gmail/SMTP infrastructure endpoints
@@ -385,7 +386,7 @@ def _parse_html_descriptions_bs4(html: str) -> list[str]:
     return descriptions
 
 
-def _find_primary_table_bs4(soup) -> object:
+def _find_primary_table_bs4(soup: Any) -> Any | None:
     """Prefer rowData table and fall back to first table."""
     return soup.find("table", id="rowData") or soup.find("table")
 

@@ -1,6 +1,6 @@
 {
   "service_account_json": "Service_account.json",
-  "spreadsheet_id": "1eltlDO-nt-rBicbz_h3CmPc4g0TJNR9wFcsAw2ngNvs",
+  "spreadsheet_id": "YOUR_SPREADSHEET_ID_HERE",
   "sheet_name": "GlassClaims",
   "imap_server": "imap.gmail.com",
   "smtp_server": "smtp.gmail.com",
