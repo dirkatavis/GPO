@@ -172,7 +172,7 @@ class TestIT4_SpreadsheetPersistence:
                 "Make": "Windshield",
                 "Location": "APO",
                 "Damage Type": "Replacement",
-                "Claim#": "Pending",
+                "Claim#": "Missing",
                 "WorkItem": "verified",
             })
         return pd.DataFrame(rows, columns=COLUMNS)
@@ -207,7 +207,7 @@ class TestIT4_SpreadsheetPersistence:
     def test_appends_without_overwriting(self, mock_get_ws):
         """Second write appends new rows; existing data untouched."""
         existing = [["03/05/2026", "59340120", "1HGCM82633A004352",
-                      "Windshield", "APO", "Replacement", "Pending", "verified"]]
+                      "Windshield", "APO", "Replacement", "Missing", "verified"]]
         ws = self._mock_worksheet(existing)
         mock_get_ws.return_value = ws
 
@@ -223,7 +223,7 @@ class TestIT4_SpreadsheetPersistence:
     def test_idempotency_prevents_duplicate(self, mock_get_ws):
         """Same MVA+Date already in sheet → no rows inserted."""
         existing = [["03/05/2026", "59340120", "1HGCM82633A004352",
-                      "Windshield", "APO", "Replacement", "Pending", "verified"]]
+                      "Windshield", "APO", "Replacement", "Missing", "verified"]]
         ws = self._mock_worksheet(existing)
         mock_get_ws.return_value = ws
 
@@ -244,4 +244,4 @@ class TestIT4_SpreadsheetPersistence:
 
         written = ws.insert_rows.call_args[0][0]
         assert written[0] == ["03/05/2026", "59340120", "1HGCM82633A004352",
-                                "Windshield", "APO", "Replacement", "Pending", "verified"]
+                                "Windshield", "APO", "Replacement", "Missing", "verified"]

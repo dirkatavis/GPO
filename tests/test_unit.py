@@ -29,60 +29,60 @@ class TestUT1_SuffixRegex:
     Damage Type / Claim# for all four suffix variations."""
 
     def test_plain_mva(self):
-        """59340120 → Replacement, Pending"""
+        """59340120 → Replacement, Missing"""
         m = MVA_PATTERN.match("59340120")
         assert m is not None
         assert m.group(1) == "59340120"
         assert m.group(2) == ""
 
     def test_repair_suffix(self):
-        """59340120r → Repair, Pending"""
+        """59340120r → Repair, Missing"""
         m = MVA_PATTERN.match("59340120r")
         assert m is not None
         assert m.group(1) == "59340120"
         assert "r" in m.group(2)
 
     def test_claim_suffix(self):
-        """59340120c → Replacement, Claim Generated"""
+        """59340120c → Replacement, Listed"""
         m = MVA_PATTERN.match("59340120c")
         assert m is not None
         assert m.group(1) == "59340120"
         assert "c" in m.group(2)
 
     def test_both_suffixes(self):
-        """59340120rc → Repair, Claim Generated"""
+        """59340120rc → Repair, Listed"""
         m = MVA_PATTERN.match("59340120rc")
         assert m is not None
         assert m.group(1) == "59340120"
         assert "r" in m.group(2) and "c" in m.group(2)
 
     def test_phase2_mapping_plain(self):
-        """End-to-end: plain MVA → Replacement + Pending"""
+        """End-to-end: plain MVA → Replacement + Missing"""
         manifest, mva_list = phase2_parse(
             ["59340120"], datetime(2026, 3, 5)
         )
         assert "59340120" in manifest
         assert manifest["59340120"]["Damage Type"] == "Replacement"
-        assert manifest["59340120"]["Claim#"] == "Pending"
+        assert manifest["59340120"]["Claim#"] == "Missing"
         assert mva_list == ["59340120"]
 
     def test_phase2_mapping_repair(self):
-        """59340120r → Repair + Pending"""
+        """59340120r → Repair + Missing"""
         manifest, _ = phase2_parse(["59340120r"], datetime(2026, 3, 5))
         assert manifest["59340120"]["Damage Type"] == "Repair"
-        assert manifest["59340120"]["Claim#"] == "Pending"
+        assert manifest["59340120"]["Claim#"] == "Missing"
 
     def test_phase2_mapping_claim(self):
-        """59340120c → Replacement + Claim Generated"""
+        """59340120c → Replacement + Listed"""
         manifest, _ = phase2_parse(["59340120c"], datetime(2026, 3, 5))
         assert manifest["59340120"]["Damage Type"] == "Replacement"
-        assert manifest["59340120"]["Claim#"] == "Claim Generated"
+        assert manifest["59340120"]["Claim#"] == "Listed"
 
     def test_phase2_mapping_both(self):
-        """59340120rc → Repair + Claim Generated"""
+        """59340120rc → Repair + Listed"""
         manifest, _ = phase2_parse(["59340120rc"], datetime(2026, 3, 5))
         assert manifest["59340120"]["Damage Type"] == "Repair"
-        assert manifest["59340120"]["Claim#"] == "Claim Generated"
+        assert manifest["59340120"]["Claim#"] == "Listed"
 
     def test_phase2_all_four_variations(self):
         """Process all four variations in one batch."""
@@ -91,13 +91,13 @@ class TestUT1_SuffixRegex:
         assert len(manifest) == 4
         assert len(mva_list) == 4
         assert manifest["59340120"]["Damage Type"] == "Replacement"
-        assert manifest["59340120"]["Claim#"] == "Pending"
+        assert manifest["59340120"]["Claim#"] == "Missing"
         assert manifest["59340121"]["Damage Type"] == "Repair"
-        assert manifest["59340121"]["Claim#"] == "Pending"
+        assert manifest["59340121"]["Claim#"] == "Missing"
         assert manifest["59340122"]["Damage Type"] == "Replacement"
-        assert manifest["59340122"]["Claim#"] == "Claim Generated"
+        assert manifest["59340122"]["Claim#"] == "Listed"
         assert manifest["59340123"]["Damage Type"] == "Repair"
-        assert manifest["59340123"]["Claim#"] == "Claim Generated"
+        assert manifest["59340123"]["Claim#"] == "Listed"
 
 
 # ─── UT-2: HTML Extraction ────────────────────────────────────────────────────

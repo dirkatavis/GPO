@@ -300,7 +300,8 @@ def phase2_parse(descriptions: list[str], email_date: datetime) -> tuple[dict, l
         # ideally make this configurable so we don't crack the code to make changes
 
         damage_type = "Repair" if "r" in suffixes else "Replacement"
-        claim = "Claim Generated" if "c" in suffixes else "Pending"
+        # Claim status values must match allowed UI options.
+        claim = "Listed" if "c" in suffixes else "Missing"
 
         manifest[mva] = {
             "Arrival Date": date_str,
