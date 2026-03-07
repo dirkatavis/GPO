@@ -84,3 +84,31 @@ def test_cycle_tracker_ignores_out_of_order_snapshot(tmp_path):
     assert active["12345678"]["first_seen"] == "2026-03-06"
     assert active["12345678"]["last_seen"] == "2026-03-06"
     assert active["12345678"]["days"] == 1
+
+
+def test_cycle_tracker_persists_across_instances(tmp_path):
+    store = tmp_path / "mva_cycle_tracker.json"
+
+    tracker_run1 = CycleTracker(store_path=store, gap_grace_days=7)
+    day1 = date(2026, 3, 5)
+    assert tracker_run1.record_snapshot(["12345678"], day1)["12345678"] == 1
+
+    # Simulate a new process/run by constructing a new tracker instance.
+    tracker_run2 = CycleTracker(store_path=store, gap_grace_days=7)
+    day2 = date(2026, 3, 6)
+    assert tracker_run2.record_snapshot(["12345678"], day2)["12345678"] == 2
+
+
+def test_cycle_tracker_ignores_invalid_active_record_in_loaded_state(tmp_path):
+    store = tmp_path / "mva_cycle_tracker.json"
+    store.write_text(
+        '{"version":1,"active":{"12345678":{"first_seen":"2026-03-05","last_seen":"BAD_DATE","days":2}},"completed":[],"last_snapshot_date":"2026-03-05"}',
+        encoding="utf-8",
+    )
+
+    tracker = CycleTracker(store_path=store, gap_grace_days=7)
+    day2 = date(2026, 3, 6)
+    result = tracker.record_snapshot(["12345678"], day2)
+
+    # Invalid loaded record should be sanitized/reset instead of crashing tracking.
+    assert result["12345678"] == 1
