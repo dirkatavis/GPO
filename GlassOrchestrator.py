@@ -61,6 +61,7 @@ def _load_runtime_config(config_path: Path) -> dict:
         "mva_pattern": r"^(\d{8})([rc]*)$",
         "cycle_tracker_store": "data/mva_cycle_tracker.json",
         "cycle_gap_grace_days": 1,
+        "cycle_completed_retention": 1000,
         "location": "APO",
         "columns": [
             "Arrival Date",
@@ -147,6 +148,7 @@ LOCATION = str(RUNTIME_CONFIG["location"])
 COLUMNS = list(RUNTIME_CONFIG["columns"])
 CYCLE_TRACKER_STORE = _resolve_config_path(str(RUNTIME_CONFIG.get("cycle_tracker_store", "data/mva_cycle_tracker.json")))
 CYCLE_GAP_GRACE_DAYS = int(RUNTIME_CONFIG.get("cycle_gap_grace_days", 1))
+CYCLE_COMPLETED_RETENTION = int(RUNTIME_CONFIG.get("cycle_completed_retention", 1000))
 
 
 # The phase terminalogy should be seen as a design process but not an archetetual method
@@ -508,7 +510,11 @@ def parse_descriptions_to_manifest(descriptions: list[str], email_date: datetime
 
 def apply_cycle_day_tracking(manifest: dict[str, dict], mva_list: list[str], snapshot_date: datetime) -> None:
     """Update local cycle-day store and annotate manifest rows with cycle metrics."""
-    tracker = CycleTracker(CYCLE_TRACKER_STORE, gap_grace_days=CYCLE_GAP_GRACE_DAYS)
+    tracker = CycleTracker(
+        CYCLE_TRACKER_STORE,
+        gap_grace_days=CYCLE_GAP_GRACE_DAYS,
+        completed_retention=CYCLE_COMPLETED_RETENTION,
+    )
     cycle_days_by_mva = tracker.record_snapshot(mva_list, snapshot_date.date())
     for mva, days in cycle_days_by_mva.items():
         if mva in manifest:

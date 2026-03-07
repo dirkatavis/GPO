@@ -50,3 +50,37 @@ def test_cycle_tracker_resets_after_gap_beyond_grace(tmp_path):
     assert run["12345678"] == 1
     active = tracker.get_active_cycles()
     assert active["12345678"]["first_seen"] == "2026-03-08"
+
+
+def test_cycle_tracker_same_day_snapshot_is_idempotent(tmp_path):
+    store = tmp_path / "mva_cycle_tracker.json"
+    tracker = CycleTracker(store_path=store, gap_grace_days=7)
+
+    day1 = date(2026, 3, 5)
+    first = tracker.record_snapshot(["12345678"], day1)
+    second = tracker.record_snapshot(["12345678"], day1)
+
+    assert first["12345678"] == 1
+    assert second["12345678"] == 1
+
+    active = tracker.get_active_cycles()
+    assert active["12345678"]["last_seen"] == "2026-03-05"
+    assert active["12345678"]["days"] == 1
+
+
+def test_cycle_tracker_ignores_out_of_order_snapshot(tmp_path):
+    store = tmp_path / "mva_cycle_tracker.json"
+    tracker = CycleTracker(store_path=store, gap_grace_days=7)
+
+    day2 = date(2026, 3, 6)
+    tracker.record_snapshot(["12345678"], day2)
+
+    day1 = date(2026, 3, 5)
+    result = tracker.record_snapshot(["12345678"], day1)
+
+    # Out-of-order run should be ignored and existing chronology preserved.
+    assert result["12345678"] == 1
+    active = tracker.get_active_cycles()
+    assert active["12345678"]["first_seen"] == "2026-03-06"
+    assert active["12345678"]["last_seen"] == "2026-03-06"
+    assert active["12345678"]["days"] == 1
