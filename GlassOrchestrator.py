@@ -29,6 +29,7 @@ from typing import Any
 
 import gspread  # pylint: disable=import-error  # pyright: ignore[reportMissingImports]
 import pandas as pd
+from cycle_tracker import CycleTracker
 
 try:
     from bs4 import BeautifulSoup
@@ -58,6 +59,8 @@ def _load_runtime_config(config_path: Path) -> dict:
         "smtp_port": 587,
         "target_sender": "export@orcascan.com",
         "mva_pattern": r"^(\d{8})([rc]*)$",
+        "cycle_tracker_store": "data/mva_cycle_tracker.json",
+        "cycle_gap_grace_days": 1,
         "location": "APO",
         "columns": [
             "Arrival Date",
@@ -142,6 +145,8 @@ MVA_PATTERN = _compile_regex_with_fallback(
 )
 LOCATION = str(RUNTIME_CONFIG["location"])
 COLUMNS = list(RUNTIME_CONFIG["columns"])
+CYCLE_TRACKER_STORE = _resolve_config_path(str(RUNTIME_CONFIG.get("cycle_tracker_store", "data/mva_cycle_tracker.json")))
+CYCLE_GAP_GRACE_DAYS = int(RUNTIME_CONFIG.get("cycle_gap_grace_days", 1))
 
 
 # The phase terminalogy should be seen as a design process but not an archetetual method
@@ -499,6 +504,21 @@ def parse_descriptions_to_manifest(descriptions: list[str], email_date: datetime
     log.info("Parsing: Manifest built — %d valid MVAs, %d malformed",
              len(manifest), len(descriptions) - len(manifest))
     return manifest, mva_list
+
+
+def apply_cycle_day_tracking(manifest: dict[str, dict], mva_list: list[str], snapshot_date: datetime) -> None:
+    """Update local cycle-day store and annotate manifest rows with cycle metrics."""
+    tracker = CycleTracker(CYCLE_TRACKER_STORE, gap_grace_days=CYCLE_GAP_GRACE_DAYS)
+    cycle_days_by_mva = tracker.record_snapshot(mva_list, snapshot_date.date())
+    for mva, days in cycle_days_by_mva.items():
+        if mva in manifest:
+            # Kept out of the Google sheet 8-column contract; useful for metrics tab/reporting.
+            manifest[mva]["Cycle Days"] = days
+    log.info(
+        "Cycle tracking: %d active MVAs recorded (grace=%d day(s))",
+        len(cycle_days_by_mva),
+        CYCLE_GAP_GRACE_DAYS,
+    )
 
 
 # ─── Worker Processing ────────────────────────────────────────────────────────
@@ -862,6 +882,13 @@ def run_pipeline() -> None:
     if not manifest:
         log.info("Pipeline complete — no valid MVAs after parsing")
         return
+
+    # Step 2b: Cycle-day tracking (local JSON state)
+    try:
+        apply_cycle_day_tracking(manifest, mva_list, email_date)
+    except Exception as exc:
+        # Tracking should not block operational processing.
+        log.error("Cycle tracking failed — %s", exc, exc_info=True)
 
     # Step 3: Worker
     try:
