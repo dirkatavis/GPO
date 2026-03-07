@@ -15,16 +15,16 @@ echo ==================================================
 echo [TEST RUNNER] START
 echo Working dir : %CD%
 echo Python      : .venv\Scripts\python.exe
-echo Targets     : tests\test_unit.py tests\test_integration.py
+echo Targets     : tests\test_unit.py tests\test_integration.py tests\test_cycle_tracker.py
 echo ==================================================
 
-".venv\Scripts\python.exe" -m pytest tests\test_unit.py tests\test_integration.py
+".venv\Scripts\python.exe" -m pytest tests\test_unit.py tests\test_integration.py tests\test_cycle_tracker.py
 set "TEST_EXIT=%ERRORLEVEL%"
 
 echo.
 if "%TEST_EXIT%"=="0" (
   echo ==================================================
-  echo [TEST RUNNER] PASS - all unit/integration tests passed
+  echo [TEST RUNNER] PASS - all targeted tests passed
   echo Exit code: %TEST_EXIT%
   echo ==================================================
 ) else (

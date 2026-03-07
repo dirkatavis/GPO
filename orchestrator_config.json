@@ -7,6 +7,9 @@
   "smtp_port": 587,
   "target_sender": "export@orcascan.com",
   "mva_pattern": "^(\\d{8})([rc]*)$",
+  "cycle_tracker_store": "data/mva_cycle_tracker.json",
+  "cycle_gap_grace_days": 7,
+  "cycle_completed_retention": 1000,
   "location": "APO",
   "columns": [
     "Arrival Date",
