@@ -770,19 +770,19 @@ def is_duplicate(mva: str, date: str, existing_keys: set[str]) -> bool:
 
 def notify_replacement_items(df: pd.DataFrame) -> None:
     """
-    Filter for Replacement items, build an HTML email with a styled table,
+    Build an HTML email with a styled table for all persisted rows,
     and send it. Rows with VIN='N/A' are highlighted red to flag the
     ordering team for manual action.
     """
-    log.info("Notification: Building replacement alert …")
+    log.info("Notification: Building order alert …")
 
-    replacements = df[df["Damage Type"] == "Replacement"]
-    if replacements.empty:
-        log.info("Notification: No Replacement items — skipping")
+    items = df.copy()
+    if items.empty:
+        log.info("Notification: No items to notify — skipping")
         return
 
-    html = _build_html_table(replacements)
-    subject = f"Glass Replacement Order — {replacements.iloc[0]['Arrival Date']} ({len(replacements)} items)"
+    html = _build_html_table(items)
+    subject = f"Glass Order — {items.iloc[0]['Arrival Date']} ({len(items)} items)"
     outbound = OutboundEmail(
         subject=subject,
         html_body=html,
@@ -953,14 +953,15 @@ def run_pipeline() -> None:
 
     # Step 6: Persist
     try:
-        log.info("Persistence: %d new row(s) written", len(persist_new_rows(df_merged)))
+        df_new_rows = persist_new_rows(df_merged)
+        log.info("Persistence: %d new row(s) written", len(df_new_rows))
     except Exception as exc:
         log.error("Persistence failed — %s", exc, exc_info=True)
         return
 
     # Step 7: Notify
     try:
-        notify_replacement_items(df_merged)
+        notify_replacement_items(df_new_rows)
     except Exception as exc:
         log.error("Notification failed — %s", exc, exc_info=True)
         # Notification failure should not lose data; log and continue

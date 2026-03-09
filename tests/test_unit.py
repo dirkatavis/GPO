@@ -11,6 +11,7 @@ import re
 import json
 from datetime import datetime
 
+import pandas as pd
 import pytest
 
 from GlassOrchestrator import (
@@ -19,6 +20,7 @@ from GlassOrchestrator import (
     _load_runtime_config,
     _extract_body,
     _parse_html_descriptions,
+    notify_replacement_items,
     is_duplicate,
     parse_descriptions_to_manifest,
 )
@@ -321,3 +323,50 @@ class TestUT5_LocalConfigOverrides:
         assert merged["location"] == "BOS"
         # Value present only in runtime config should be preserved.
         assert merged["cycle_gap_grace_days"] == 7
+
+
+# ─── UT-6: Notification Payload ─────────────────────────────────────────────
+
+
+class TestUT6_NotificationPayload:
+    """Ensure notification email includes all persisted rows."""
+
+    def test_notify_includes_replacement_and_repair_rows(self, monkeypatch):
+        df = pd.DataFrame(
+            [
+                {
+                    "Arrival Date": "03/09/2026",
+                    "MVA": "59654641",
+                    "VIN": "1HGCY1F44SA083453",
+                    "Make": "HONDA ACCORD",
+                    "Location": "APO",
+                    "Damage Type": "Replacement",
+                    "Claim#": "Listed",
+                    "WorkItem": "verified",
+                },
+                {
+                    "Arrival Date": "03/09/2026",
+                    "MVA": "60853262",
+                    "VIN": "JN8BT3DDXTW297427",
+                    "Make": "NISSAN ROGUE AWD",
+                    "Location": "APO",
+                    "Damage Type": "Repair",
+                    "Claim#": "Missing",
+                    "WorkItem": "verified",
+                },
+            ]
+        )
+
+        sent_messages = []
+
+        def fake_send(message):
+            sent_messages.append(message)
+
+        monkeypatch.setattr("GlassOrchestrator._send_email", fake_send)
+
+        notify_replacement_items(df)
+
+        assert len(sent_messages) == 1
+        assert "(2 items)" in sent_messages[0].subject
+        assert "59654641" in sent_messages[0].html_body
+        assert "60853262" in sent_messages[0].html_body
