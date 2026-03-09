@@ -39,7 +39,7 @@ Phase 5 inserts rows above the summary section; the idempotency key is **`MVA | 
 ## Setup
 
 ```bash
-pip install -r requirements.txt
+.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
 ### Environment Variables
@@ -57,7 +57,16 @@ with Editor access to the target spreadsheet.
 ## Usage
 
 ```bash
-python GlassOrchestrator.py
+Run-GlassOrchestrator.cmd
+```
+
+`Run-GlassOrchestrator.cmd` bootstraps the runtime by creating `.venv` (if missing),
+installing `requirements.txt`, then launching `GlassOrchestrator.py` with the venv interpreter.
+
+Or run directly with the virtual environment interpreter:
+
+```bash
+.venv\Scripts\python.exe GlassOrchestrator.py
 ```
 
 ## File Layout

@@ -23,12 +23,25 @@ from GlassOrchestrator import (
     CSV_PATH,
     DATA_DIR,
     IMAP_SERVER,
+    SERVICE_ACCOUNT_JSON,
+    SPREADSHEET_ID,
     SHEET_NAME,
     TARGET_SENDER,
+    _get_worksheet,
     parse_descriptions_to_manifest,
     merge_manifest_with_results,
     persist_new_rows,
 )
+
+
+_LIVE_SHEETS_OPT_IN = os.getenv("GLASS_RUN_LIVE_SHEETS_TESTS", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
+_HAS_SHEET_ID = SPREADSHEET_ID != "YOUR_SPREADSHEET_ID_HERE"
+_HAS_SERVICE_ACCOUNT_FILE = Path(SERVICE_ACCOUNT_JSON).exists()
+_RUN_LIVE_SHEETS_IT5 = _LIVE_SHEETS_OPT_IN and _HAS_SHEET_ID and _HAS_SERVICE_ACCOUNT_FILE
 
 
 # ─── IT-1: Gmail Connection & Search ─────────────────────────────────────────
@@ -245,3 +258,30 @@ class TestIT4_SpreadsheetPersistence:
         written = ws.insert_rows.call_args[0][0]
         assert written[0] == ["03/05/2026", "59340120", "1HGCM82633A004352",
                                 "Windshield", "APO", "Replacement", "Missing", "verified"]
+
+
+# ─── IT-5: Spreadsheet Configuration Health ──────────────────────────────────
+
+
+@pytest.mark.skipif(
+    not _RUN_LIVE_SHEETS_IT5,
+    reason=(
+        "Skipping live sheet health test. Set GLASS_RUN_LIVE_SHEETS_TESTS=1 and "
+        "provide non-placeholder SPREADSHEET_ID with existing service account json."
+    ),
+)
+class TestIT5_SpreadsheetConfigurationHealth:
+    """Integration checks for spreadsheet configuration and accessibility."""
+
+    def test_spreadsheet_id_is_not_placeholder(self):
+        """Configured spreadsheet id should not be the default placeholder."""
+        assert SPREADSHEET_ID != "YOUR_SPREADSHEET_ID_HERE", (
+            "SPREADSHEET_ID is still placeholder. Set GLASS_SPREADSHEET_ID "
+            "or update orchestrator_config.json."
+        )
+
+    def test_service_account_can_open_configured_sheet(self):
+        """Service account should open configured sheet/tab successfully."""
+        ws = _get_worksheet()
+        assert ws is not None
+        assert ws.title == SHEET_NAME
