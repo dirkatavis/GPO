@@ -27,7 +27,10 @@ from email.utils import getaddresses
 from pathlib import Path
 from typing import Any
 
-import gspread  # pylint: disable=import-error  # pyright: ignore[reportMissingImports]
+try:
+    import gspread  # pylint: disable=import-error  # pyright: ignore[reportMissingImports]
+except ModuleNotFoundError:
+    gspread = None  # type: ignore[assignment]
 import pandas as pd
 from cycle_tracker import CycleTracker
 
@@ -46,6 +49,7 @@ RESULTS_PATH = BASE_DIR / "GlassResults.txt"
 WORKER_SCRIPT = BASE_DIR / "CGI" / "src" / "GlassDataParser.py"
 
 ORCHESTRATOR_CONFIG_PATH = BASE_DIR / "orchestrator_config.json"
+ORCHESTRATOR_LOCAL_CONFIG_PATH = BASE_DIR / "orchestrator_config.local.json"
 
 
 def _load_runtime_config(config_path: Path) -> dict:
@@ -94,6 +98,24 @@ def _load_runtime_config(config_path: Path) -> dict:
         return defaults
 
 
+def _load_local_config_overrides(config_path: Path) -> dict:
+    """Load optional local JSON overrides for machine-specific configuration."""
+    if not config_path.exists():
+        return {}
+
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            loaded = json.load(f)
+        if not isinstance(loaded, dict):
+            return {}
+        return loaded
+    except (OSError, json.JSONDecodeError) as exc:
+        logging.getLogger("GlassOrchestrator").warning(
+            "Local config override load failed for %s; ignoring (%s)", config_path, exc
+        )
+        return {}
+
+
 def _resolve_config_path(path_value: str) -> Path:
     """Resolve relative config paths from BASE_DIR and keep absolute paths intact."""
     path = Path(path_value)
@@ -114,6 +136,7 @@ def _compile_regex_with_fallback(pattern_text: str, fallback_text: str) -> re.Pa
 
 
 RUNTIME_CONFIG = _load_runtime_config(ORCHESTRATOR_CONFIG_PATH)
+RUNTIME_CONFIG.update(_load_local_config_overrides(ORCHESTRATOR_LOCAL_CONFIG_PATH))
 
 # Google Sheets target
 SERVICE_ACCOUNT_JSON = _resolve_config_path(str(RUNTIME_CONFIG["service_account_json"]))
@@ -638,6 +661,13 @@ def merge_manifest_with_results(manifest: dict) -> pd.DataFrame:
 
 def _get_worksheet():
     """Authenticate with Google Sheets and return the GlassClaims worksheet."""
+    if gspread is None:
+        raise ModuleNotFoundError(
+            "Missing dependency 'gspread'. Use the project virtual environment: "
+            "'.venv\\Scripts\\python.exe GlassOrchestrator.py' "
+            "or run 'Run-GlassOrchestrator.cmd'."
+        )
+
     gc = gspread.service_account(filename=str(SERVICE_ACCOUNT_JSON))
     sh = gc.open_by_key(SPREADSHEET_ID)
     return sh.worksheet(SHEET_NAME)

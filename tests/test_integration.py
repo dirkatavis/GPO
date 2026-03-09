@@ -23,8 +23,10 @@ from GlassOrchestrator import (
     CSV_PATH,
     DATA_DIR,
     IMAP_SERVER,
+    SPREADSHEET_ID,
     SHEET_NAME,
     TARGET_SENDER,
+    _get_worksheet,
     parse_descriptions_to_manifest,
     merge_manifest_with_results,
     persist_new_rows,
@@ -245,3 +247,23 @@ class TestIT4_SpreadsheetPersistence:
         written = ws.insert_rows.call_args[0][0]
         assert written[0] == ["03/05/2026", "59340120", "1HGCM82633A004352",
                                 "Windshield", "APO", "Replacement", "Missing", "verified"]
+
+
+# ─── IT-5: Spreadsheet Configuration Health ──────────────────────────────────
+
+
+class TestIT5_SpreadsheetConfigurationHealth:
+    """Integration checks for spreadsheet configuration and accessibility."""
+
+    def test_spreadsheet_id_is_not_placeholder(self):
+        """Configured spreadsheet id should not be the default placeholder."""
+        assert SPREADSHEET_ID != "YOUR_SPREADSHEET_ID_HERE", (
+            "SPREADSHEET_ID is still placeholder. Set GLASS_SPREADSHEET_ID "
+            "or update orchestrator_config.json."
+        )
+
+    def test_service_account_can_open_configured_sheet(self):
+        """Service account should open configured sheet/tab successfully."""
+        ws = _get_worksheet()
+        assert ws is not None
+        assert ws.title == SHEET_NAME

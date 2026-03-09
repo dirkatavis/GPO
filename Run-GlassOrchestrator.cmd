@@ -3,14 +3,34 @@ setlocal
 
 cd /d "%~dp0"
 
-if not exist ".venv\Scripts\python.exe" (
-  echo [ERROR] Missing venv Python: .venv\Scripts\python.exe
+set "VENV_PY=.venv\Scripts\python.exe"
+
+if not exist "%VENV_PY%" (
+  echo [BOOTSTRAP] Creating virtual environment in .venv ...
+  where py >nul 2>&1
+  if %errorlevel%==0 (
+    py -3 -m venv .venv
+  ) else (
+    python -m venv .venv
+  )
+
+  if not exist "%VENV_PY%" (
+    echo [ERROR] Failed to create virtual environment.
+    pause
+    exit /b 1
+  )
+)
+
+echo [BOOTSTRAP] Installing/updating Python requirements ...
+"%VENV_PY%" -m pip install --disable-pip-version-check -r requirements.txt
+if errorlevel 1 (
+  echo [ERROR] Failed to install requirements from requirements.txt
   pause
   exit /b 1
 )
 
 echo Running GlassOrchestrator with venv Python...
-".venv\Scripts\python.exe" ".\GlassOrchestrator.py"
+"%VENV_PY%" ".\GlassOrchestrator.py"
 
 echo.
 echo Exit code: %errorlevel%
