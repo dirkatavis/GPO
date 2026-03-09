@@ -15,10 +15,10 @@ echo ==================================================
 echo [TEST RUNNER] START
 echo Working dir : %CD%
 echo Python      : .venv\Scripts\python.exe
-echo Targets     : tests\test_unit.py tests\test_integration.py tests\test_cycle_tracker.py
+echo Targets     : tests\test_unit.py tests\test_integration.py tests\test_cycle_tracker.py tests\test_failure.py
 echo ==================================================
 
-".venv\Scripts\python.exe" -m pytest tests\test_unit.py tests\test_integration.py tests\test_cycle_tracker.py
+".venv\Scripts\python.exe" -m pytest tests\test_unit.py tests\test_integration.py tests\test_cycle_tracker.py tests\test_failure.py
 set "TEST_EXIT=%ERRORLEVEL%"
 
 echo.

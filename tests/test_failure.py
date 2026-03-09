@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
+import pandas as pd
 import pytest
 
 from GlassOrchestrator import (
@@ -68,7 +69,7 @@ class TestFT1_WorkerCrashHandling:
         persist_called = False
         notify_called = False
         original_persist = __import__("GlassOrchestrator").persist_new_rows
-        original_notify = __import__("GlassOrchestrator").notify_replacement_items
+        original_notify = __import__("GlassOrchestrator").notify_order_items
 
         def spy_persist(df):
             nonlocal persist_called
@@ -81,7 +82,7 @@ class TestFT1_WorkerCrashHandling:
             return original_notify(df)
 
         monkeypatch.setattr("GlassOrchestrator.persist_new_rows", spy_persist)
-        monkeypatch.setattr("GlassOrchestrator.notify_replacement_items", spy_notify)
+        monkeypatch.setattr("GlassOrchestrator.notify_order_items", spy_notify)
 
         # Run the pipeline — should not crash, but should abort after worker step
         run_pipeline()
@@ -158,3 +159,65 @@ class TestFT2_StaleResultsProtection:
         run_pipeline()
 
         assert not merge_called, "Merge should NOT execute when results are stale"
+
+
+# ─── FT-3: Notification/Persistence Consistency ─────────────────────────────
+
+
+class TestFT3_NotificationConsistency:
+    """Email payload should be based on rows actually written to the sheet."""
+
+    def test_pipeline_notifies_only_persisted_rows(self, monkeypatch):
+        email_date = datetime(2026, 3, 9)
+
+        df_merged = pd.DataFrame([
+            {
+                "Arrival Date": "03/09/2026",
+                "MVA": "01712003",
+                "VIN": "N/A",
+                "Make": "N/A",
+                "Location": "APO",
+                "Damage Type": "Replacement",
+                "Claim#": "Listed",
+                "WorkItem": "verified",
+            },
+            {
+                "Arrival Date": "03/09/2026",
+                "MVA": "59654641",
+                "VIN": "1HGCY1F44SA083453",
+                "Make": "HONDA ACCORD",
+                "Location": "APO",
+                "Damage Type": "Replacement",
+                "Claim#": "Listed",
+                "WorkItem": "verified",
+            },
+        ])
+
+        # Simulate idempotency skipping the N/A row; only one row is newly persisted.
+        df_new_rows = df_merged[df_merged["MVA"] == "59654641"].copy()
+
+        monkeypatch.setattr(
+            "GlassOrchestrator.fetch_input_descriptions",
+            lambda: (["59654641", "01712003"], email_date),
+        )
+        monkeypatch.setattr(
+            "GlassOrchestrator.parse_descriptions_to_manifest",
+            lambda descriptions, dt: ({"59654641": {}, "01712003": {}}, ["59654641", "01712003"]),
+        )
+        monkeypatch.setattr("GlassOrchestrator.apply_cycle_day_tracking", lambda *args, **kwargs: None)
+        monkeypatch.setattr("GlassOrchestrator.parse_glass_data_results", lambda *args, **kwargs: None)
+        monkeypatch.setattr("GlassOrchestrator.validate_results_freshness", lambda *args, **kwargs: None)
+        monkeypatch.setattr("GlassOrchestrator.merge_manifest_with_results", lambda manifest: df_merged)
+        monkeypatch.setattr("GlassOrchestrator.persist_new_rows", lambda df: df_new_rows)
+
+        notified_mvas: list[str] = []
+
+        def spy_notify(df):
+            nonlocal notified_mvas
+            notified_mvas = df["MVA"].tolist()
+
+        monkeypatch.setattr("GlassOrchestrator.notify_order_items", spy_notify)
+
+        run_pipeline()
+
+        assert notified_mvas == ["59654641"]
