@@ -20,7 +20,7 @@ from GlassOrchestrator import (
     _load_runtime_config,
     _extract_body,
     _parse_html_descriptions,
-    notify_replacement_items,
+    notify_order_items,
     is_duplicate,
     parse_descriptions_to_manifest,
 )
@@ -364,7 +364,7 @@ class TestUT6_NotificationPayload:
 
         monkeypatch.setattr("GlassOrchestrator._send_email", fake_send)
 
-        notify_replacement_items(df)
+        notify_order_items(df)
 
         assert len(sent_messages) == 1
         assert "(2 items)" in sent_messages[0].subject

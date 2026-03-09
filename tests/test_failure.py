@@ -69,7 +69,7 @@ class TestFT1_WorkerCrashHandling:
         persist_called = False
         notify_called = False
         original_persist = __import__("GlassOrchestrator").persist_new_rows
-        original_notify = __import__("GlassOrchestrator").notify_replacement_items
+        original_notify = __import__("GlassOrchestrator").notify_order_items
 
         def spy_persist(df):
             nonlocal persist_called
@@ -82,7 +82,7 @@ class TestFT1_WorkerCrashHandling:
             return original_notify(df)
 
         monkeypatch.setattr("GlassOrchestrator.persist_new_rows", spy_persist)
-        monkeypatch.setattr("GlassOrchestrator.notify_replacement_items", spy_notify)
+        monkeypatch.setattr("GlassOrchestrator.notify_order_items", spy_notify)
 
         # Run the pipeline — should not crash, but should abort after worker step
         run_pipeline()
@@ -216,7 +216,7 @@ class TestFT3_NotificationConsistency:
             nonlocal notified_mvas
             notified_mvas = df["MVA"].tolist()
 
-        monkeypatch.setattr("GlassOrchestrator.notify_replacement_items", spy_notify)
+        monkeypatch.setattr("GlassOrchestrator.notify_order_items", spy_notify)
 
         run_pipeline()
 

@@ -768,7 +768,7 @@ def is_duplicate(mva: str, date: str, existing_keys: set[str]) -> bool:
 # ─── Notification ─────────────────────────────────────────────────────────────
 
 
-def notify_replacement_items(df: pd.DataFrame) -> None:
+def notify_order_items(df: pd.DataFrame) -> None:
     """
     Build an HTML email with a styled table for all persisted rows,
     and send it. Rows with VIN='N/A' are highlighted red to flag the
@@ -843,7 +843,7 @@ def _build_html_table(df: pd.DataFrame) -> str:
         </style>
     </head>
     <body>
-        <h2>Glass Replacement Order Summary</h2>
+        <h2>Glass Order Summary</h2>
         {alert_banner}
         <table>
             <thead>
@@ -961,7 +961,7 @@ def run_pipeline() -> None:
 
     # Step 7: Notify
     try:
-        notify_replacement_items(df_new_rows)
+        notify_order_items(df_new_rows)
     except Exception as exc:
         log.error("Notification failed — %s", exc, exc_info=True)
         # Notification failure should not lose data; log and continue
