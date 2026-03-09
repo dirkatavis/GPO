@@ -23,6 +23,7 @@ from GlassOrchestrator import (
     CSV_PATH,
     DATA_DIR,
     IMAP_SERVER,
+    SERVICE_ACCOUNT_JSON,
     SPREADSHEET_ID,
     SHEET_NAME,
     TARGET_SENDER,
@@ -31,6 +32,16 @@ from GlassOrchestrator import (
     merge_manifest_with_results,
     persist_new_rows,
 )
+
+
+_LIVE_SHEETS_OPT_IN = os.getenv("GLASS_RUN_LIVE_SHEETS_TESTS", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
+_HAS_SHEET_ID = SPREADSHEET_ID != "YOUR_SPREADSHEET_ID_HERE"
+_HAS_SERVICE_ACCOUNT_FILE = Path(SERVICE_ACCOUNT_JSON).exists()
+_RUN_LIVE_SHEETS_IT5 = _LIVE_SHEETS_OPT_IN and _HAS_SHEET_ID and _HAS_SERVICE_ACCOUNT_FILE
 
 
 # ─── IT-1: Gmail Connection & Search ─────────────────────────────────────────
@@ -252,6 +263,13 @@ class TestIT4_SpreadsheetPersistence:
 # ─── IT-5: Spreadsheet Configuration Health ──────────────────────────────────
 
 
+@pytest.mark.skipif(
+    not _RUN_LIVE_SHEETS_IT5,
+    reason=(
+        "Skipping live sheet health test. Set GLASS_RUN_LIVE_SHEETS_TESTS=1 and "
+        "provide non-placeholder SPREADSHEET_ID with existing service account json."
+    ),
+)
 class TestIT5_SpreadsheetConfigurationHealth:
     """Integration checks for spreadsheet configuration and accessibility."""
 

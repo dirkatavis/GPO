@@ -8,10 +8,10 @@ set "VENV_PY=.venv\Scripts\python.exe"
 if not exist "%VENV_PY%" (
   echo [BOOTSTRAP] Creating virtual environment in .venv ...
   where py >nul 2>&1
-  if %errorlevel%==0 (
-    py -3 -m venv .venv
-  ) else (
+  if errorlevel 1 (
     python -m venv .venv
+  ) else (
+    py -3 -m venv .venv
   )
 
   if not exist "%VENV_PY%" (

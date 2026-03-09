@@ -8,12 +8,15 @@ UT-4: Sanitization
 """
 
 import re
+import json
 from datetime import datetime
 
 import pytest
 
 from GlassOrchestrator import (
     MVA_PATTERN,
+    _load_local_config_overrides,
+    _load_runtime_config,
     _extract_body,
     _parse_html_descriptions,
     is_duplicate,
@@ -253,3 +256,68 @@ class TestUT4_Sanitization:
         manifest, mva_list = parse_descriptions_to_manifest(["59340120x"], datetime(2026, 3, 5))
         assert manifest == {}
         assert mva_list == []
+
+
+# ─── UT-5: Local Config Overrides ───────────────────────────────────────────
+
+
+class TestUT5_LocalConfigOverrides:
+    """Validate local override loading and merge precedence behavior."""
+
+    def test_missing_local_config_returns_empty_dict(self, tmp_path):
+        local_path = tmp_path / "orchestrator_config.local.json"
+        loaded = _load_local_config_overrides(local_path)
+        assert loaded == {}
+
+    def test_invalid_json_local_config_returns_empty_dict(self, tmp_path, caplog):
+        local_path = tmp_path / "orchestrator_config.local.json"
+        local_path.write_text("{invalid", encoding="utf-8")
+
+        loaded = _load_local_config_overrides(local_path)
+
+        assert loaded == {}
+        assert "Local config override load failed" in caplog.text
+
+    def test_non_dict_local_config_returns_empty_dict(self, tmp_path):
+        local_path = tmp_path / "orchestrator_config.local.json"
+        local_path.write_text(json.dumps(["not", "a", "dict"]), encoding="utf-8")
+
+        loaded = _load_local_config_overrides(local_path)
+        assert loaded == {}
+
+    def test_valid_local_config_returns_dict(self, tmp_path):
+        local_path = tmp_path / "orchestrator_config.local.json"
+        local_path.write_text(
+            json.dumps({"sheet_name": "LocalGlassClaims", "location": "BOS"}),
+            encoding="utf-8",
+        )
+
+        loaded = _load_local_config_overrides(local_path)
+        assert loaded == {"sheet_name": "LocalGlassClaims", "location": "BOS"}
+
+    def test_local_overrides_take_precedence_over_runtime_config(self, tmp_path):
+        runtime_path = tmp_path / "orchestrator_config.json"
+        local_path = tmp_path / "orchestrator_config.local.json"
+
+        runtime_path.write_text(
+            json.dumps(
+                {
+                    "sheet_name": "BaseSheet",
+                    "location": "APO",
+                    "cycle_gap_grace_days": 7,
+                }
+            ),
+            encoding="utf-8",
+        )
+        local_path.write_text(
+            json.dumps({"sheet_name": "LocalSheet", "location": "BOS"}),
+            encoding="utf-8",
+        )
+
+        merged = _load_runtime_config(runtime_path)
+        merged.update(_load_local_config_overrides(local_path))
+
+        assert merged["sheet_name"] == "LocalSheet"
+        assert merged["location"] == "BOS"
+        # Value present only in runtime config should be preserved.
+        assert merged["cycle_gap_grace_days"] == 7
