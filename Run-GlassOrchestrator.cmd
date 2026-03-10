@@ -16,7 +16,6 @@ if not exist "%VENV_PY%" (
 
   if not exist "%VENV_PY%" (
     echo [ERROR] Failed to create virtual environment.
-    pause
     exit /b 1
   )
 )
@@ -25,7 +24,6 @@ echo [BOOTSTRAP] Installing/updating Python requirements ...
 "%VENV_PY%" -m pip install --disable-pip-version-check -r requirements.txt
 if errorlevel 1 (
   echo [ERROR] Failed to install requirements from requirements.txt
-  pause
   exit /b 1
 )
 
@@ -34,5 +32,4 @@ echo Running GlassOrchestrator with venv Python...
 
 echo.
 echo Exit code: %errorlevel%
-pause
 exit /b %errorlevel%
