@@ -1,0 +1,32 @@
+[
+  {
+    "description": "Successful Login Test",
+    "username": "tomsmith",
+    "password": "SuperSecretPassword!",
+    "expected_message": "You logged into a secure area!"
+  },
+  {
+    "description": "Invalid Username Test",
+    "username": "baduser",
+    "password": "SuperSecretPassword!",
+    "expected_message": "Your username is invalid!"
+  },
+  {
+    "description": "Invalid Password Test",
+    "username": "tomsmith",
+    "password": "wrongpassword",
+    "expected_message": "Your username is invalid!"
+  },
+  {
+    "description": "Boundary Case: Empty Fields",
+    "username": "",
+    "password": "",
+    "expected_message": "Your username is invalid!"
+  },
+  {
+    "description": "Boundary Case: Special Characters",
+    "username": "!@#$%^&*",
+    "password": "SuperSecretPassword!",
+    "expected_message": "Your username is invalid!"
+  }
+]

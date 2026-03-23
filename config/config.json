@@ -1,0 +1,14 @@
+{
+	"username": "xE96693@co.abg.com",
+	"password": "Eds12345!",
+	"login_id": "E96693",
+	"delay_seconds": 9,
+    "mva_entry_delay_seconds": 30,
+      "credentials": {
+        "sso_email": "xe96693@co.abg.com"
+      },
+      "logging": {
+    "level": "DEBUG",
+    "format": "[%(levelname)s] [%(asctime)s] %(message)s"
+  }
+}
