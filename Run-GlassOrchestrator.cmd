@@ -4,6 +4,7 @@ setlocal
 cd /d "%~dp0"
 
 set "VENV_PY=.venv\Scripts\python.exe"
+set "CGI_HEADLESS=1"
 
 if not exist "%VENV_PY%" (
   echo [BOOTSTRAP] Creating virtual environment in .venv ...
