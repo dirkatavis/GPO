@@ -74,27 +74,16 @@ Or run directly with the virtual environment interpreter:
 ```
 GlassOrchestrator.py     # Main 6-phase pipeline
 Service_account.json     # Google service account key (not committed)
-CGI/                     # Git submodule → dirkatavis/CGI
-  src/
-    GlassDataParser.py  # Phase 3 worker (Selenium scraper)
+src/
+  GlassDataParser.py    # Phase 3 worker (Selenium scraper)
+core/
+flows/
+pages/
+utils/
+config/
 data/
   GlassDataParser.csv    # Phase 3 input (auto-generated)
 GlassResults.txt         # Phase 3 output (worker-produced)
-```
-
-## Submodule (CGI)
-
-The Phase 3 worker (`GlassDataParser.py`) lives in the [CGI](https://github.com/dirkatavis/CGI) repo, included as a git submodule.
-
-```bash
-# Clone with submodule
-git clone --recurse-submodules https://github.com/dirkatavis/GPO.git
-
-# Or init after cloning
-git submodule update --init --recursive
-
-# Pull latest CGI changes
-git submodule update --remote CGI
 ```
 
 ## Failure Handling

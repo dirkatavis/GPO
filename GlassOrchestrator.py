@@ -46,7 +46,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 CSV_PATH = DATA_DIR / "GlassDataParser.csv"
 RESULTS_PATH = BASE_DIR / "GlassResults.txt"
-WORKER_SCRIPT = BASE_DIR / "CGI" / "src" / "GlassDataParser.py"
+WORKER_SCRIPT = BASE_DIR / "src" / "GlassDataParser.py"
 
 ORCHESTRATOR_CONFIG_PATH = BASE_DIR / "orchestrator_config.json"
 ORCHESTRATOR_LOCAL_CONFIG_PATH = BASE_DIR / "orchestrator_config.local.json"
