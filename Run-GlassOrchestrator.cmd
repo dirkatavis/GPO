@@ -16,7 +16,7 @@ if not exist "%VENV_PY%" (
   py -3.13 -m venv .venv
   if errorlevel 1 (
     echo [WARNING] py -3.13 failed, trying py -3 ...
-    py -m venv .venv
+    py -3 -m venv .venv
   )
 
   if not exist "%VENV_PY%" (
@@ -34,7 +34,7 @@ if not exist "%REQ_FILE%" (
 )
 
 set "REQ_HASH="
-for /f "skip=1 tokens=1" %%H in ('certutil -hashfile "%REQ_FILE%" SHA256 ^| findstr /r /v /c:"hash of file" /c:"CertUtil"') do (
+for /f "tokens=1" %%H in ('certutil -hashfile "%REQ_FILE%" SHA256 ^| findstr /r /v /c:"hash of file" /c:"CertUtil"') do (
   set "REQ_HASH=%%H"
   goto :hash_done
 )
@@ -53,7 +53,9 @@ if "%SYNC_DEPS%"=="1" (
     echo [ERROR] Failed to install requirements from %REQ_FILE%
     exit /b 1
   )
-  if defined REQ_HASH > "%REQ_STAMP%" echo !REQ_HASH!
+  if defined REQ_HASH (
+    > "%REQ_STAMP%" echo !REQ_HASH!
+  )
 ) else (
   echo [BOOTSTRAP] Requirements unchanged. Skipping dependency install.
 )
