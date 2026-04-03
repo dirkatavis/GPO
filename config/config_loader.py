@@ -5,6 +5,7 @@ from typing import Any
 CONFIG_DIR = os.path.dirname(__file__)
 CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
 PROJECT_CONFIG_PATH = os.path.join(CONFIG_DIR, "project.json")
+PROJECT_LOCAL_CONFIG_PATH = os.path.join(CONFIG_DIR, "project.local.json")
 LOCAL_CONFIG_PATH = os.path.join(CONFIG_DIR, "config.local.json")
 
 
@@ -49,9 +50,13 @@ def _get_nested_value(config: dict[str, Any], key: str) -> Any:
 
 _CONFIG = _merge_dicts(
     _merge_dicts(
-        _load_json_config(CONFIG_PATH, required=True),
-        _load_json_config(PROJECT_CONFIG_PATH, required=False),
+        _merge_dicts(
+            _load_json_config(CONFIG_PATH, required=True),
+            _load_json_config(PROJECT_CONFIG_PATH, required=False),
+        ),
+        _load_json_config(PROJECT_LOCAL_CONFIG_PATH, required=False),
     ),
+    # Keep config.local.json as a legacy local override.
     _load_json_config(LOCAL_CONFIG_PATH, required=False),
 )
 

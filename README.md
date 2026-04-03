@@ -59,17 +59,22 @@ with Editor access to the target spreadsheet.
 
 ### Config Files
 
-- `orchestrator_config.json` contains shared orchestrator defaults.
-- `config/config.local.json` is the preferred machine-specific local override file (gitignored).
-- `orchestrator_config.local.json` is still supported as a legacy override file (gitignored).
-- `config/config.json` contains shared UI/login defaults.
+- `orchestrator_config.json` contains shared orchestrator defaults (business logic).
+- `orchestrator_project.json` is a committed template for orchestrator project-specific values.
+- `orchestrator_project.local.json` is gitignored and should hold real project-specific secrets/IDs.
+- `orchestrator_config.local.json` is a legacy orchestrator local override (gitignored).
+- `config/config.json` contains shared UI/login defaults (business logic).
+- `config/project.json` is a committed template for UI/login project-specific values.
+- `config/project.local.json` is gitignored and should hold real UI/login secrets/IDs.
+- `config/config.local.json` is a legacy shared local override (gitignored).
 
-To reduce setup confusion, the orchestrator now reads local overrides from both files in this order:
-1. `orchestrator_config.local.json` (legacy fallback)
-2. `config/config.local.json` (preferred, wins if both define the same key)
+Effective precedence (last one wins on conflicts):
+1. base defaults (`orchestrator_config.json`, `config/config.json`)
+2. committed project templates (`orchestrator_project.json`, `config/project.json`)
+3. gitignored project local overrides (`orchestrator_project.local.json`, `config/project.local.json`)
+4. legacy local overrides (`orchestrator_config.local.json`, `config/config.local.json`)
 
-Local config values take precedence over the shared config files, so each user can keep their own credentials,
-tenant URL, and workflow defaults without changing committed files.
+For new-user onboarding, put real credentials and environment-specific IDs only in the `*.local.json` files.
 
 ## Usage
 

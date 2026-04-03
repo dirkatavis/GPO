@@ -50,6 +50,7 @@ WORKER_SCRIPT = BASE_DIR / "src" / "GlassDataParser.py"
 
 ORCHESTRATOR_CONFIG_PATH = BASE_DIR / "orchestrator_config.json"
 ORCHESTRATOR_PROJECT_CONFIG_PATH = BASE_DIR / "orchestrator_project.json"
+ORCHESTRATOR_PROJECT_LOCAL_CONFIG_PATH = BASE_DIR / "orchestrator_project.local.json"
 ORCHESTRATOR_LOCAL_CONFIG_PATH = BASE_DIR / "orchestrator_config.local.json"
 SHARED_LOCAL_CONFIG_PATH = BASE_DIR / "config" / "config.local.json"
 
@@ -137,10 +138,12 @@ def _compile_regex_with_fallback(pattern_text: str, fallback_text: str) -> re.Pa
 
 RUNTIME_CONFIG = _load_runtime_config(ORCHESTRATOR_CONFIG_PATH)
 RUNTIME_CONFIG.update(_load_runtime_config(ORCHESTRATOR_PROJECT_CONFIG_PATH))
+RUNTIME_CONFIG.update(_load_local_config_overrides(ORCHESTRATOR_PROJECT_LOCAL_CONFIG_PATH))
 
-# Prefer one shared local override file so users can keep most per-machine settings in one place.
-# Keep orchestrator_config.local.json as a legacy fallback for backward compatibility.
+# Legacy local overrides kept for backward compatibility.
 RUNTIME_CONFIG.update(_load_local_config_overrides(ORCHESTRATOR_LOCAL_CONFIG_PATH))
+
+# Shared local overrides can still be used for cross-module machine settings.
 RUNTIME_CONFIG.update(_load_local_config_overrides(SHARED_LOCAL_CONFIG_PATH))
 
 # Google Sheets target
