@@ -2,6 +2,9 @@
   "service_account_json": "Service_account.json",
   "spreadsheet_id": "YOUR_SPREADSHEET_ID_HERE",
   "sheet_name": "GlassClaims",
+  "email_account": "",
+  "email_password": "",
+  "sender_address": "",
   "imap_server": "imap.gmail.com",
   "smtp_server": "smtp.gmail.com",
   "smtp_port": 587,
@@ -11,6 +14,8 @@
   "cycle_gap_grace_days": 7,
   "cycle_completed_retention": 1000,
   "location": "APO",
+  "work_item_default_flag": "verified",
+  "warmup_mva": "50227203",
   "columns": [
     "Arrival Date",
     "MVA",

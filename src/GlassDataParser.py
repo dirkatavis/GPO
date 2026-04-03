@@ -77,9 +77,9 @@ def read_mva_list(csv_path):
 
 
 def main():
-    username = get_config("username")
-    password = get_config("password")
-    login_id = get_config("login_id")
+    username = os.getenv("GLASS_LOGIN_USERNAME") or get_config("username")
+    password = os.getenv("GLASS_LOGIN_PASSWORD") or get_config("password")
+    login_id = os.getenv("GLASS_LOGIN_ID") or get_config("login_id")
     create_driver()
     driver = get_driver()
     login_flow = LoginFlow(driver)
@@ -96,7 +96,7 @@ def main():
     vehicle_properties_page = VehiclePropertiesPage(driver)
 
     # --- Workaround: Query a dummy MVA first to prime the AUT ---
-    dummy_mva = "50227203"
+    dummy_mva = get_config("warmup_mva", "50227203")
     try:
         input_field = mva_input_page.find_input()
         if not (input_field and input_field.is_enabled() and input_field.is_displayed()):

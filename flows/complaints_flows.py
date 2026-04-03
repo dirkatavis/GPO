@@ -11,6 +11,10 @@ from flows.opcode_flows import select_opcode
 from flows.mileage_flows import complete_mileage_dialog
 from core.complaint_types import ComplaintType, GlassDamageType
 from utils.project_paths import ProjectPaths
+from config.config_loader import get_config
+
+_DEFAULT_DRIVABILITY = get_config("default_drivability", "Yes")
+_GLASS_OPCODE_FALLBACK = get_config("glass_opcode_fallback", "Glass")
 
 
 
@@ -39,12 +43,12 @@ def handle_new_complaint(driver, mva: str) -> dict:
     log.info(f"[WORKITEM] {mva} - Adding new complaint")
     time.sleep(2)
 
-    # Drivability -> Yes
-    log.info(f"[DRIVABLE] {mva} - answering drivability question: Yes")
-    if not click_element(driver, (By.XPATH, "//button[normalize-space()='Yes']")):
-        log.warning(f"[WORKITEM][WARN] {mva} - Drivable=Yes button not found")
+    # Drivability -> configured answer
+    log.info(f"[DRIVABLE] {mva} - answering drivability question: {_DEFAULT_DRIVABILITY}")
+    if not click_element(driver, (By.XPATH, f"//button[normalize-space()='{_DEFAULT_DRIVABILITY}']")):
+        log.warning(f"[WORKITEM][WARN] {mva} - Drivable={_DEFAULT_DRIVABILITY} button not found")
         return {"status": "failed", "reason": "drivable_yes"}
-    log.info(f"[COMPLAINT] {mva} - Drivable=Yes")
+    log.info(f"[COMPLAINT] {mva} - Drivable={_DEFAULT_DRIVABILITY}")
 
 
     # Complaint Type -> PM
@@ -166,8 +170,8 @@ def associate_existing_complaint(driver, mva: str) -> dict:
             if res.get("status") != "ok":
                 return {"status": "failed", "reason": "mileage", "mva": mva}
 
-            # Step 3: Opcode → Glass
-            res = select_opcode(driver, mva, code_text="Glass")
+            # Step 3: Opcode → configured glass fallback
+            res = select_opcode(driver, mva, code_text=_GLASS_OPCODE_FALLBACK)
             if res.get("status") != "ok":
                 return {"status": "failed", "reason": "opcode", "mva": mva}
 
@@ -201,11 +205,11 @@ def create_new_complaint(driver, mva: str, complaint_type: str = "glass") -> dic
             return {"status": "failed", "reason": "add_btn"}
         log.info(f"[GLASS][COMPLAINT][NEW] {mva} - Add/Create New Complaint clicked")
 
-        # 2. Handle Drivability (Yes/No). Simplest case -> always Yes
-        if not click_element(driver, (By.XPATH, "//button[normalize-space()='Yes']"), timeout=10, desc="Drivability Yes"):
-            log.warning(f"[GLASS][COMPLAINT][NEW][WARN] {mva} - could not click Yes in Drivability step")
+        # 2. Handle Drivability (Yes/No). Simplest case -> always configured answer
+        if not click_element(driver, (By.XPATH, f"//button[normalize-space()='{_DEFAULT_DRIVABILITY}']"), timeout=10, desc=f"Drivability {_DEFAULT_DRIVABILITY}"):
+            log.warning(f"[GLASS][COMPLAINT][NEW][WARN] {mva} - could not click {_DEFAULT_DRIVABILITY} in Drivability step")
             return {"status": "failed", "reason": "drivability"}
-        log.info(f"[GLASS][COMPLAINT][NEW] {mva} - Drivability Yes clicked")
+        log.info(f"[GLASS][COMPLAINT][NEW] {mva} - Drivability {_DEFAULT_DRIVABILITY} clicked")
         time.sleep(1)
 
         # 3) Select Complaint Type: always click 'Glass Damage' first, then select specific damage type using enums

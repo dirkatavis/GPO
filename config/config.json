@@ -1,14 +1,26 @@
 {
-	"username": "xE96693@co.abg.com",
-	"password": "Eds12345!",
-	"login_id": "E96693",
+	"login_url": "https://your-company.palantirfoundry.com/multipass/login",
+	"compass_app_label": "Compass Mobile",
+	"default_drivability": "Yes",
+	"default_opcode": "PM Gas",
+	"glass_opcode_primary": "Glass Repair/Replace",
+	"glass_opcode_fallback": "Glass",
+	"completion_note": "Done",
+	"warmup_mva": "50227203",
+	"username": "YOUR_EMAIL@company.com",
+	"password": "YOUR_PASSWORD",
+	"login_id": "YOUR_LOGIN_ID",
 	"delay_seconds": 9,
-    "mva_entry_delay_seconds": 30,
-      "credentials": {
-        "sso_email": "xe96693@co.abg.com"
-      },
-      "logging": {
-    "level": "DEBUG",
-    "format": "[%(levelname)s] [%(asctime)s] %(message)s"
-  }
+	"mva_entry_delay_seconds": 30,
+	"spreadsheet_id": "YOUR_SPREADSHEET_ID_HERE",
+	"email_account": "",
+	"email_password": "",
+	"sender_address": "",
+	"credentials": {
+		"sso_email": "YOUR_SSO_EMAIL@company.com"
+	},
+	"logging": {
+		"level": "DEBUG",
+		"format": "[%(levelname)s] [%(asctime)s] %(message)s"
+	}
 }

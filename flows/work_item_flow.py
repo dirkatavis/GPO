@@ -8,6 +8,7 @@ from flows.complaints_flows import associate_existing_complaint
 from flows.finalize_flow import finalize_workitem
 from utils.logger import log
 from utils.ui_helpers import click_element, safe_wait
+from config.config_loader import get_config
 
 def get_work_items(driver, mva: str):
     """Collect all open glass work items for the given MVA."""
@@ -338,7 +339,7 @@ def complete_pm_workitem(driver, mva: str, timeout: int = 8) -> dict:
     if res.get("status") != "ok":
         return res  # pass through failure dict
     time.sleep(5)  # wait for card to open
-    res = mark_complete_pm_workitem(driver, mva, note="Done", timeout=timeout)
+    res = mark_complete_pm_workitem(driver, mva, note=get_config("completion_note", "Done"), timeout=timeout)
     time.sleep(5)  # wait for completion to process
     if res.get("status") == "ok":
         return {"status": "ok", "reason": "completed_open_pm", "mva": mva}

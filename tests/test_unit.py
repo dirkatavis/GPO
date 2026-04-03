@@ -324,6 +324,33 @@ class TestUT5_LocalConfigOverrides:
         # Value present only in runtime config should be preserved.
         assert merged["cycle_gap_grace_days"] == 7
 
+    def test_legacy_local_then_shared_local_override_order(self, tmp_path):
+        runtime_path = tmp_path / "orchestrator_config.json"
+        shared_local_path = tmp_path / "config.local.json"
+        legacy_local_path = tmp_path / "orchestrator_config.local.json"
+
+        runtime_path.write_text(
+            json.dumps({"location": "APO", "email_account": "base@company.com"}),
+            encoding="utf-8",
+        )
+        shared_local_path.write_text(
+            json.dumps({"email_account": "shared@company.com", "sheet_name": "SharedSheet"}),
+            encoding="utf-8",
+        )
+        legacy_local_path.write_text(
+            json.dumps({"email_account": "legacy@company.com"}),
+            encoding="utf-8",
+        )
+
+        merged = _load_runtime_config(runtime_path)
+        merged.update(_load_local_config_overrides(legacy_local_path))
+        merged.update(_load_local_config_overrides(shared_local_path))
+
+        # Shared local file can provide orchestrator values.
+        assert merged["sheet_name"] == "SharedSheet"
+        # Shared local file wins when both define the same key.
+        assert merged["email_account"] == "shared@company.com"
+
 
 # ─── UT-6: Notification Payload ─────────────────────────────────────────────
 
