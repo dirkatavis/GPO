@@ -117,11 +117,14 @@ def click_next_on_mileage(driver):
 def select_opcode_glass(driver):
     """Select 'Glass Repair/Replace' on OpsCode screen.
     """
-    result = select_opcode(driver, "N/A", code_text="Glass Repair/Replace")
+    primary_opcode = get_config("glass_opcode_primary", "Glass Repair/Replace")
+    fallback_opcode = get_config("glass_opcode_fallback", "Glass")
+
+    result = select_opcode(driver, "N/A", code_text=primary_opcode)
     if result.get("status") == "ok":
         return True
 
-    fallback = select_opcode(driver, "N/A", code_text="Glass")
+    fallback = select_opcode(driver, "N/A", code_text=fallback_opcode)
     return fallback.get("status") == "ok"
 
 def click_create_work_item(driver):
@@ -373,9 +376,9 @@ def get_work_item_configs(csv_path):
 # ----------------------------------------------------------------------------
 
 def main():
-    username = get_config("username")
-    password = get_config("password")
-    login_id = get_config("login_id")
+    username = os.getenv("GLASS_LOGIN_USERNAME") or get_config("username")
+    password = os.getenv("GLASS_LOGIN_PASSWORD") or get_config("password")
+    login_id = os.getenv("GLASS_LOGIN_ID") or get_config("login_id")
     driver = create_driver()
     mva_input_page = MVAInputPage(driver)
     login_flow = LoginFlow(driver)

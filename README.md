@@ -31,10 +31,10 @@ Phase 5 inserts rows above the summary section; the idempotency key is **`MVA | 
 | 2 | **MVA** | Orca Scan Description | 2 | 8-digit, suffixes stripped |
 | 3 | **VIN** | CGI scraper (`GlassResults.txt`) | 4 | `N/A` if scraper miss |
 | 4 | **Make** | CGI scraper `Desc` column | 4 | Populated by Phase 4 merge |
-| 5 | **Location** | Constant `APO` | 2 | Always `APO` |
+| 5 | **Location** | Runtime config | 2 | Defaults to `APO` |
 | 6 | **Damage Type** | Suffix `r` → Repair | 2 | Default: `Replacement` |
 | 7 | **Claim#** | Suffix `c` → Listed | 2 | Default: `Missing` |
-| 8 | **WorkItem** | Pipeline flag | 2 | Always `verified` |
+| 8 | **WorkItem** | Runtime config | 2 | Defaults to `verified` |
 
 ## Setup
 
@@ -50,14 +50,48 @@ Phase 5 inserts rows above the summary section; the idempotency key is **`MVA | 
 | `GLASS_EMAIL_PASSWORD` | Gmail app password |
 | `GLASS_SENDER` | From address for outbound notifications |
 | `GLASS_NOTIFY_RECIPIENTS` | Comma-separated recipient list |
+| `GLASS_LOGIN_USERNAME` | UI login username (overrides config username) |
+| `GLASS_LOGIN_PASSWORD` | UI login password (overrides config password) |
+| `GLASS_LOGIN_ID` | UI login WWID/login id (overrides config login_id) |
 
 Phase 5 also requires a **Google Service Account** JSON key file at `Service_account.json` in the project root,
 with Editor access to the target spreadsheet.
+
+### Config Files
+
+- `orchestrator_config.json` contains shared orchestrator defaults (business logic).
+- `orchestrator_project.json` is a committed template for orchestrator project-specific values.
+- `orchestrator_project.local.json` is gitignored and should hold real project-specific secrets/IDs.
+- `orchestrator_config.local.json` is a legacy orchestrator local override (gitignored).
+- `config/config.json` contains shared UI/login defaults (business logic).
+- `config/project.json` is a committed template for UI/login project-specific values.
+- `config/project.local.json` is gitignored and should hold real UI/login secrets/IDs.
+- `config/config.local.json` is a legacy shared local override (gitignored).
+
+Effective precedence (last one wins on conflicts):
+1. base defaults (`orchestrator_config.json`, `config/config.json`)
+2. committed project templates (`orchestrator_project.json`, `config/project.json`)
+3. gitignored project local overrides (`orchestrator_project.local.json`, `config/project.local.json`)
+4. legacy local overrides (`orchestrator_config.local.json`, `config/config.local.json`)
+
+For new-user onboarding, put real credentials and environment-specific IDs only in the `*.local.json` files.
 
 ## Usage
 
 ```bash
 Run-GlassOrchestrator.cmd
+```
+
+Before first run (or when credentials change), you can launch the interactive env setup:
+
+```bash
+Run-Setup-GlassEnv.cmd
+```
+
+If you only need to set the login password, use:
+
+```bash
+Run-Set-GlassPassword.cmd
 ```
 
 `Run-GlassOrchestrator.cmd` bootstraps the runtime by creating `.venv` (if missing),
@@ -67,6 +101,23 @@ Or run directly with the virtual environment interpreter:
 
 ```bash
 .venv\Scripts\python.exe GlassOrchestrator.py
+```
+
+### Run All Tests (1-click)
+
+```bash
+Run-Tests.cmd
+```
+
+`Run-Tests.cmd` will:
+- create `.venv` automatically if missing,
+- install `requirements.txt`,
+- run the full pytest suite under `tests/`.
+
+Optional: pass specific targets to run a subset.
+
+```bash
+Run-Tests.cmd tests/test_unit.py
 ```
 
 ## File Layout

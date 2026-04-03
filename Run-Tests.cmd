@@ -1,30 +1,61 @@
 @echo off
-setlocal
+setlocal EnableExtensions
 
 cd /d "%~dp0"
 
-if not exist ".venv\Scripts\python.exe" (
+set "PYTHON_EXE=.venv\Scripts\python.exe"
+
+if not exist "%PYTHON_EXE%" (
   echo ==================================================
-  echo [TEST RUNNER] ERROR
-  echo Missing venv Python: .venv\Scripts\python.exe
+  echo [TEST RUNNER] .venv not found. Creating virtual environment...
   echo ==================================================
+
+  where py >nul 2>nul
+  if "%ERRORLEVEL%"=="0" (
+    py -3 -m venv .venv
+  ) else (
+    where python >nul 2>nul
+    if not "%ERRORLEVEL%"=="0" (
+      echo [TEST RUNNER] ERROR: Could not find Python launcher.
+      exit /b 1
+    )
+    python -m venv .venv
+  )
+
+  if not exist "%PYTHON_EXE%" (
+    echo [TEST RUNNER] ERROR: Failed to create .venv
+    exit /b 1
+  )
+)
+
+echo ==================================================
+echo [TEST RUNNER] Installing dependencies...
+echo ==================================================
+"%PYTHON_EXE%" -m pip install -r requirements.txt
+if not "%ERRORLEVEL%"=="0" (
+  echo [TEST RUNNER] ERROR: dependency installation failed.
   exit /b 1
+)
+
+set "TEST_TARGETS=tests"
+if not "%~1"=="" (
+  set "TEST_TARGETS=%*"
 )
 
 echo ==================================================
 echo [TEST RUNNER] START
 echo Working dir : %CD%
-echo Python      : .venv\Scripts\python.exe
-echo Targets     : tests\test_unit.py tests\test_integration.py tests\test_cycle_tracker.py tests\test_failure.py
+echo Python      : %PYTHON_EXE%
+echo Targets     : %TEST_TARGETS%
 echo ==================================================
 
-".venv\Scripts\python.exe" -m pytest tests\test_unit.py tests\test_integration.py tests\test_cycle_tracker.py tests\test_failure.py
+"%PYTHON_EXE%" -m pytest %TEST_TARGETS%
 set "TEST_EXIT=%ERRORLEVEL%"
 
 echo.
 if "%TEST_EXIT%"=="0" (
   echo ==================================================
-  echo [TEST RUNNER] PASS - all targeted tests passed
+  echo [TEST RUNNER] PASS - all selected tests passed
   echo Exit code: %TEST_EXIT%
   echo ==================================================
 ) else (

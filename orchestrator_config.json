@@ -1,16 +1,37 @@
 {
-  "service_account_json": "Service_account.json",
-  "spreadsheet_id": "YOUR_SPREADSHEET_ID_HERE",
+  "_comment": "BUSINESS LOGIC DEFAULTS — Do not change these unless updating workflow/parsing rules. Project-specific values are in orchestrator_project.json",
+  
+  "sheet_name_comment": "Google Sheet tab name where results are written. Must match exactly. Tip: start a rename in Sheets to see the current name.",
   "sheet_name": "GlassClaims",
+  
+  "imap_server_comment": "IMAP server for email retrieval. Use imap.gmail.com for Gmail, or your company's IMAP endpoint.",
   "imap_server": "imap.gmail.com",
+  
+  "smtp_server_comment": "SMTP server for sending notifications. Use smtp.gmail.com for Gmail, or your company's SMTP endpoint.",
   "smtp_server": "smtp.gmail.com",
+  
+  "smtp_port_comment": "SMTP port. Typically 587 for TLS or 465 for SSL.",
   "smtp_port": 587,
-  "target_sender": "export@orcascan.com",
+  
+  "mva_pattern_comment": "Regex to parse MVA codes. Group 1: 8 digits, Group 2: optional suffixes (r=Repair, c=Claim). Do not change unless parsing format changes.",
   "mva_pattern": "^(\\d{8})([rc]*)$",
+  
+  "cycle_tracker_store_comment": "Path to JSON file that tracks processed MVA cycles. Created at runtime.",
   "cycle_tracker_store": "data/mva_cycle_tracker.json",
+  
+  "cycle_gap_grace_days_comment": "Number of days to allow between cycles before flagging as a gap. Used for cycle tracking logic.",
   "cycle_gap_grace_days": 7,
+  
+  "cycle_completed_retention_comment": "Number of completed cycles to retain in memory before pruning. Higher values = more memory used.",
   "cycle_completed_retention": 1000,
-  "location": "APO",
+  
+  "work_item_default_flag_comment": "Default status flag for work items. Typically 'verified' or 'pending'.",
+  "work_item_default_flag": "verified",
+  
+  "warmup_mva_comment": "Dummy MVA used for Selenium warmup/initialization. Any valid 8-digit number works.",
+  "warmup_mva": "50227203",
+  
+  "columns_comment": "Column order for Google Sheet output. Order must match the GlassClaims tab structure.",
   "columns": [
     "Arrival Date",
     "MVA",
@@ -20,6 +41,5 @@
     "Damage Type",
     "Claim#",
     "WorkItem"
-  ],
-  "notify_recipients": []
+  ]
 }

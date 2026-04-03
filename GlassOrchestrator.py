@@ -49,14 +49,15 @@ RESULTS_PATH = BASE_DIR / "GlassResults.txt"
 WORKER_SCRIPT = BASE_DIR / "src" / "GlassDataParser.py"
 
 ORCHESTRATOR_CONFIG_PATH = BASE_DIR / "orchestrator_config.json"
+ORCHESTRATOR_PROJECT_CONFIG_PATH = BASE_DIR / "orchestrator_project.json"
+ORCHESTRATOR_PROJECT_LOCAL_CONFIG_PATH = BASE_DIR / "orchestrator_project.local.json"
 ORCHESTRATOR_LOCAL_CONFIG_PATH = BASE_DIR / "orchestrator_config.local.json"
+SHARED_LOCAL_CONFIG_PATH = BASE_DIR / "config" / "config.local.json"
 
 
 def _load_runtime_config(config_path: Path) -> dict:
     """Load runtime configuration from JSON with sane defaults."""
     defaults = {
-        "service_account_json": "Service_account.json",
-        "spreadsheet_id": "YOUR_SPREADSHEET_ID_HERE",
         "sheet_name": "GlassClaims",
         "imap_server": "imap.gmail.com",
         "smtp_server": "smtp.gmail.com",
@@ -136,7 +137,14 @@ def _compile_regex_with_fallback(pattern_text: str, fallback_text: str) -> re.Pa
 
 
 RUNTIME_CONFIG = _load_runtime_config(ORCHESTRATOR_CONFIG_PATH)
+RUNTIME_CONFIG.update(_load_runtime_config(ORCHESTRATOR_PROJECT_CONFIG_PATH))
+RUNTIME_CONFIG.update(_load_local_config_overrides(ORCHESTRATOR_PROJECT_LOCAL_CONFIG_PATH))
+
+# Legacy local overrides kept for backward compatibility.
 RUNTIME_CONFIG.update(_load_local_config_overrides(ORCHESTRATOR_LOCAL_CONFIG_PATH))
+
+# Shared local overrides can still be used for cross-module machine settings.
+RUNTIME_CONFIG.update(_load_local_config_overrides(SHARED_LOCAL_CONFIG_PATH))
 
 # Google Sheets target
 SERVICE_ACCOUNT_JSON = _resolve_config_path(str(RUNTIME_CONFIG["service_account_json"]))
@@ -148,10 +156,10 @@ IMAP_SERVER = str(RUNTIME_CONFIG["imap_server"])
 SMTP_SERVER = str(RUNTIME_CONFIG["smtp_server"])
 SMTP_PORT = int(RUNTIME_CONFIG["smtp_port"])
 
-# Gmail credentials — set via environment variables
-EMAIL_ACCOUNT = os.getenv("GLASS_EMAIL_ACCOUNT", "")
-EMAIL_PASSWORD = os.getenv("GLASS_EMAIL_PASSWORD", "")  # App password recommended
-SENDER_ADDRESS = os.getenv("GLASS_SENDER", "")
+# Gmail credentials — env vars take priority; fall back to orchestrator_config values
+EMAIL_ACCOUNT = os.getenv("GLASS_EMAIL_ACCOUNT") or str(RUNTIME_CONFIG.get("email_account", ""))
+EMAIL_PASSWORD = os.getenv("GLASS_EMAIL_PASSWORD") or str(RUNTIME_CONFIG.get("email_password", ""))
+SENDER_ADDRESS = os.getenv("GLASS_SENDER") or str(RUNTIME_CONFIG.get("sender_address", ""))
 
 # Runtime business/config values
 notify_recipients_env = os.getenv("GLASS_NOTIFY_RECIPIENTS", "").strip()
@@ -522,7 +530,7 @@ def parse_descriptions_to_manifest(descriptions: list[str], email_date: datetime
             "Location": LOCATION,
             "Damage Type": damage_type,
             "Claim#": claim,
-            "WorkItem": "verified",
+            "WorkItem": RUNTIME_CONFIG.get("work_item_default_flag", "verified"),
         }
         mva_list.append(mva)
 

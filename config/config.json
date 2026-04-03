@@ -1,14 +1,36 @@
 {
-	"username": "xE96693@co.abg.com",
-	"password": "Eds12345!",
-	"login_id": "E96693",
+	"_comment": "BUSINESS LOGIC DEFAULTS — Do not change these unless updating UI/workflow rules. Project-specific values are in config/project.json",
+	
+	"compass_app_label_comment": "UI label for the Compass application selector. Change only if Compass is relabeled in your Palantir tenant.",
+	"compass_app_label": "Compass Mobile",
+	
+	"default_drivability_comment": "Default answer for drivability questions. Typically 'Yes' or 'No' depending on business rules.",
+	"default_drivability": "Yes",
+	
+	"default_opcode_comment": "Default opcode when creating work items. Examples: 'PM Gas', 'PM Glass', etc.",
+	"default_opcode": "PM Gas",
+	
+	"glass_opcode_primary_comment": "Primary opcode for glass-related work items. Used when damage type indicates glass work.",
+	"glass_opcode_primary": "Glass Repair/Replace",
+	
+	"glass_opcode_fallback_comment": "Fallback opcode if primary is unavailable. Used when 'Glass Repair/Replace' is not selectable.",
+	"glass_opcode_fallback": "Glass",
+	
+	"completion_note_comment": "Text appended to work item notes when marking as complete. Examples: 'Done', 'Completed', 'Closed'.",
+	"completion_note": "Done",
+	
+	"warmup_mva_comment": "Dummy MVA for Selenium browser warmup. Same value as orchestrator config.",
+	"warmup_mva": "50227203",
+	
+	"delay_seconds_comment": "Default wait time (seconds) for UI element visibility. Adjust for slow/fast networks.",
 	"delay_seconds": 9,
-    "mva_entry_delay_seconds": 30,
-      "credentials": {
-        "sso_email": "xe96693@co.abg.com"
-      },
-      "logging": {
-    "level": "DEBUG",
-    "format": "[%(levelname)s] [%(asctime)s] %(message)s"
-  }
+	
+	"mva_entry_delay_seconds_comment": "Wait time (seconds) when entering MVA codes. Increase if OCR or data entry is slow.",
+	"mva_entry_delay_seconds": 30,
+	
+	"logging_comment": "Logging configuration. level: DEBUG (verbose), INFO (normal), ERROR (errors only). format: log message template.",
+	"logging": {
+		"level": "DEBUG",
+		"format": "[%(levelname)s] [%(asctime)s] %(message)s"
+	}
 }

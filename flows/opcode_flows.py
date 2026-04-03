@@ -4,10 +4,13 @@ from selenium.webdriver.common.by import By
 
 from utils.logger import log
 from utils.ui_helpers import find_element
+from config.config_loader import get_config
 
 
-def select_opcode(driver, mva: str, code_text: str = "PM Gas") -> dict:
+def select_opcode(driver, mva: str, code_text: str = None) -> dict:
     """Select an opcode by visible text from the opcode dialog."""
+    if code_text is None:
+        code_text = get_config("default_opcode", "PM Gas")
     log.debug(f"[OPCODE] {mva} - Selecting opcode: {code_text}")
     xpath = (
         "//div[contains(@class,'opCodeItem')]"

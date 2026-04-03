@@ -1,7 +1,5 @@
-import json
 import time
 import pytest
-import os
 from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys  # ✅ add this import at the top
@@ -13,6 +11,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 
 
 from core.navigator import Navigator
+from config.config_loader import get_config
 from utils.logger import log
 from utils.ui_helpers import click_element, safe_wait, send_text
 
@@ -20,25 +19,24 @@ from utils.ui_helpers import click_element, safe_wait, send_text
 class LoginPage:
     def __init__(self, driver):
         self.driver = driver
-
-        # Hardcoded config path
-        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-        config_path = os.path.join(project_root, "config", "config.json")
-        with open(config_path, "r") as f:
-            config = json.load(f)
-            self.delay_seconds = config.get("delay_seconds", 4)
+        self.delay_seconds = get_config("delay_seconds", 4)
+        self.login_url = get_config(
+            "login_url",
+            "https://avisbudget.palantirfoundry.com/multipass/login",
+        )
+        self.compass_app_label = get_config("compass_app_label", "Compass Mobile")
 
     def is_logged_in(self):
         """Check if Compass Mobile session is already authenticated."""
         
         log.info(f"[DEBUG] inside is_logged_in")
-        elems = self.driver.find_elements(By.XPATH, "//span[contains(text(),'Compass Mobile')]")
+        elems = self.driver.find_elements(By.XPATH, f"//span[contains(text(),'{self.compass_app_label}')]")
         return len(elems) > 0
 
     def ensure_logged_in(self, username: str, password: str, login_id: str):
         # Always navigate first
         Navigator(self.driver).go_to(
-            "https://avisbudget.palantirfoundry.com/multipass/login", label="Login page"
+            self.login_url, label="Login page"
         )
 
         # Check if already on the workspace page after redirection
@@ -121,10 +119,8 @@ class LoginPage:
         
         log.info(f"[DEBUG] inside login()")
         Navigator(self.driver).go_to(
-            "https://avisbudget.palantirfoundry.com/multipass/login", label="Login page"
+            self.login_url, label="Login page"
         )
-
-        # --- Email ---
         email_field = safe_wait(
             self.driver,
             10,
@@ -193,7 +189,7 @@ class LoginPage:
             EC.element_to_be_clickable(
                 (
                     By.XPATH,
-                    "//a[@role='button']//span[contains(normalize-space(.), 'Compass Mobile')]",
+                    f"//a[@role='button']//span[contains(normalize-space(.), '{self.compass_app_label}')]",
                 )
             ),
             "compass_mobile_button",
