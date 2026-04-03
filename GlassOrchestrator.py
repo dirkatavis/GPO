@@ -49,6 +49,7 @@ RESULTS_PATH = BASE_DIR / "GlassResults.txt"
 WORKER_SCRIPT = BASE_DIR / "src" / "GlassDataParser.py"
 
 ORCHESTRATOR_CONFIG_PATH = BASE_DIR / "orchestrator_config.json"
+ORCHESTRATOR_PROJECT_CONFIG_PATH = BASE_DIR / "orchestrator_project.json"
 ORCHESTRATOR_LOCAL_CONFIG_PATH = BASE_DIR / "orchestrator_config.local.json"
 SHARED_LOCAL_CONFIG_PATH = BASE_DIR / "config" / "config.local.json"
 
@@ -56,8 +57,6 @@ SHARED_LOCAL_CONFIG_PATH = BASE_DIR / "config" / "config.local.json"
 def _load_runtime_config(config_path: Path) -> dict:
     """Load runtime configuration from JSON with sane defaults."""
     defaults = {
-        "service_account_json": "Service_account.json",
-        "spreadsheet_id": "YOUR_SPREADSHEET_ID_HERE",
         "sheet_name": "GlassClaims",
         "imap_server": "imap.gmail.com",
         "smtp_server": "smtp.gmail.com",
@@ -137,6 +136,7 @@ def _compile_regex_with_fallback(pattern_text: str, fallback_text: str) -> re.Pa
 
 
 RUNTIME_CONFIG = _load_runtime_config(ORCHESTRATOR_CONFIG_PATH)
+RUNTIME_CONFIG.update(_load_runtime_config(ORCHESTRATOR_PROJECT_CONFIG_PATH))
 
 # Prefer one shared local override file so users can keep most per-machine settings in one place.
 # Keep orchestrator_config.local.json as a legacy fallback for backward compatibility.

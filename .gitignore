@@ -17,7 +17,9 @@ GlassOrchestrator.log
 # Secrets
 Service_account.json
 orchestrator_config.local.json
+orchestrator_project.local.json
 config/config.local.json
+config/project.local.json
 
 # IDE
 .vscode/

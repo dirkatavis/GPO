@@ -1,0 +1,27 @@
+{
+  "_comment": "PROJECT-SPECIFIC CONFIGURATION — new users: fill in YOUR values here. This file is gitignored (orchestrator_project.local.json).",
+  
+  "service_account_json_comment": "Path to Google Cloud service account JSON key file. Download from your GCP project Console.",
+  "service_account_json": "Service_account.json",
+  
+  "spreadsheet_id_comment": "Google Sheet ID from the sheet URL. Format: https://docs.google.com/spreadsheets/d/[THIS_ID]/...",
+  "spreadsheet_id": "YOUR_SPREADSHEET_ID_HERE",
+  
+  "email_account_comment": "Gmail mailbox for IMAP login (inbound email scanning). Set via env var GLASS_EMAIL_ACCOUNT or here.",
+  "email_account": "",
+  
+  "email_password_comment": "Gmail app password (not regular password). Set via env var GLASS_EMAIL_PASSWORD or here. Keep empty if using env var.",
+  "email_password": "",
+  
+  "sender_address_comment": "From address for notification emails. Typically same as email_account. Set via env var GLASS_SENDER or here.",
+  "sender_address": "",
+  
+  "target_sender_comment": "Email address to monitor for inbound scan data. Typically the Orca Scan export address.",
+  "target_sender": "export@orcascan.com",
+  
+  "location_comment": "Site/location code appended to all output rows. Examples: APO, BOS, ATL. Change per deployment.",
+  "location": "APO",
+  
+  "notify_recipients_comment": "Array of email addresses to notify when replacements are found. Set via env var GLASS_NOTIFY_RECIPIENTS (comma-separated) or here.",
+  "notify_recipients": []
+}

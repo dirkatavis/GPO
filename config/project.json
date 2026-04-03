@@ -1,0 +1,32 @@
+{
+	"_comment": "PROJECT-SPECIFIC CONFIGURATION — new users: fill in YOUR values here. This file is gitignored (project.local.json).",
+	
+	"login_url_comment": "Palantir tenant URL. Format: https://[company].palantirfoundry.com/multipass/login",
+	"login_url": "https://your-company.palantirfoundry.com/multipass/login",
+	
+	"username_comment": "Login email/username for Palantir. Set via env var GLASS_LOGIN_USERNAME or here.",
+	"username": "YOUR_EMAIL@company.com",
+	
+	"password_comment": "Login password for Palantir. Set via env var GLASS_LOGIN_PASSWORD (recommended) or here. Keep empty if using env var.",
+	"password": "YOUR_PASSWORD",
+	
+	"login_id_comment": "WWID or login ID for SSO selection. Set via env var GLASS_LOGIN_ID or here.",
+	"login_id": "YOUR_LOGIN_ID",
+	
+	"spreadsheet_id_comment": "Google Sheet ID (same as orchestrator). Included here for UI config consistency.",
+	"spreadsheet_id": "YOUR_SPREADSHEET_ID_HERE",
+	
+	"email_account_comment": "Gmail mailbox (same as orchestrator). Included here for UI config consistency.",
+	"email_account": "",
+	
+	"email_password_comment": "Gmail app password (same as orchestrator). Included here for UI config consistency.",
+	"email_password": "",
+	
+	"sender_address_comment": "Sender email (same as orchestrator). Included here for UI config consistency.",
+	"sender_address": "",
+	
+	"credentials_comment": "SSO and credential configuration for Palantir login.",
+	"credentials": {
+		"sso_email": "YOUR_SSO_EMAIL@company.com"
+	}
+}
