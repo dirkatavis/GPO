@@ -10,7 +10,7 @@ Modular Python pipeline for vehicle glass procurement. Fetches scan data from Gm
 - **stack:** Python, Selenium, Google Sheets API, Gmail IMAP, CSV
 - **deploy:** Manual — Run-GlassOrchestrator.cmd bootstraps venv and launches pipeline
 - **datasources:** Gmail IMAP (export@orcascan.com), Google Sheet (ATL_Data 2026 : GlassClaims tab), GlassDataParser.csv (Phase 3 input), GlassResults.txt (Phase 3 output)
-- **testing:** No automated test suite defined — manual validation only
+- **testing:** pytest suite in `tests/` — unit, integration, failure, config, cycle tracker, and driver manager tests. Run with `.venv\Scripts\python.exe -m pytest tests/`
 - **git:** https://github.com/dirkatavis/GPO
 - **owners:** Dirk Steele
 - **deployNotes:** Requires Service_account.json (Google service account key) in project root — not committed to repo. Environment variables must be set before first run: GLASS_EMAIL_ACCOUNT, GLASS_EMAIL_PASSWORD, GLASS_SENDER, GLASS_NOTIFY_RECIPIENTS, GLASS_LOGIN_USERNAME, GLASS_LOGIN_PASSWORD, GLASS_LOGIN_ID. Local config overrides (orchestrator_config.local.json, config/config.local.json) are gitignored.

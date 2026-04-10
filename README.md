@@ -10,7 +10,7 @@ A modular Python pipeline for vehicle glass procurement, built on a **6-phase ar
 | 2 | **Parsing** | Regex triage (`^(\d{8})([rc]*)$`), build session manifest |
 | 3 | **Worker** | Write MVAs to CSV, invoke `GlassDataParser.py` subprocess |
 | 4 | **Data Merge** | Left-join manifest with scraper results; missing VIN → `N/A` |
-| 5 | **Persistence** | Append to Google Sheet (`GlassClaims` tab), idempotent on `MVA+Arrival Date` |
+| 5 | **Persistence** | Append to Google Sheet (`GlassClaims` tab), idempotent on MVA+Arrival Date` |
 | 6 | **Notification** | HTML email for Replacement items; red-flagged rows for missing VINs |
 
 ## Suffix Rules
@@ -59,22 +59,22 @@ with Editor access to the target spreadsheet.
 
 ### Config Files
 
-- `orchestrator_config.json` contains shared orchestrator defaults (business logic).
-- `orchestrator_project.json` is a committed template for orchestrator project-specific values.
-- `orchestrator_project.local.json` is gitignored and should hold real project-specific secrets/IDs.
-- `orchestrator_config.local.json` is a legacy orchestrator local override (gitignored).
-- `config/config.json` contains shared UI/login defaults (business logic).
-- `config/project.json` is a committed template for UI/login project-specific values.
-- `config/project.local.json` is gitignored and should hold real UI/login secrets/IDs.
-- `config/config.local.json` is a legacy shared local override (gitignored).
+The orchestrator loads config files in this order, with later files overriding earlier ones:
 
-Effective precedence (last one wins on conflicts):
-1. base defaults (`orchestrator_config.json`, `config/config.json`)
-2. committed project templates (`orchestrator_project.json`, `config/project.json`)
-3. gitignored project local overrides (`orchestrator_project.local.json`, `config/project.local.json`)
-4. legacy local overrides (`orchestrator_config.local.json`, `config/config.local.json`)
+1. `orchestrator_config.json` — shared orchestrator defaults
+2. `orchestrator_project.json` — committed project-level overrides
+3. `orchestrator_project.local.json` — machine-specific overrides (gitignored)
+4. `orchestrator_config.local.json` — legacy local override, still supported (gitignored)
+5. `config/config.local.json` — shared local override for cross-module machine settings (gitignored)
 
-For new-user onboarding, put real credentials and environment-specific IDs only in the `*.local.json` files.
+The UI/login config loader merges files separately in this order:
+
+1. `config/config.json` — shared UI/login defaults
+2. `config/project.json` — committed project template
+3. `config/project.local.json` — machine-specific overrides (gitignored)
+4. `config/config.local.json` — legacy local override (gitignored)
+
+Use `.local.json` files for machine-specific credentials, tenant URL, and workflow defaults so each user avoids touching committed files.
 
 ## Usage
 
