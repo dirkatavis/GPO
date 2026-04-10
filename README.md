@@ -59,17 +59,22 @@ with Editor access to the target spreadsheet.
 
 ### Config Files
 
-- `orchestrator_config.json` contains shared orchestrator defaults.
-- `config/config.local.json` is the preferred machine-specific local override file (gitignored).
-- `orchestrator_config.local.json` is still supported as a legacy override file (gitignored).
-- `config/config.json` contains shared UI/login defaults.
+The orchestrator loads config files in this order, with later files overriding earlier ones:
 
-To reduce setup confusion, the orchestrator now reads local overrides from both files in this order:
-1. `orchestrator_config.local.json` (legacy fallback)
-2. `config/config.local.json` (preferred, wins if both define the same key)
+1. `orchestrator_config.json` — shared orchestrator defaults
+2. `orchestrator_project.json` — committed project-level overrides
+3. `orchestrator_project.local.json` — machine-specific overrides (gitignored)
+4. `orchestrator_config.local.json` — legacy local override, still supported (gitignored)
+5. `config/config.local.json` — shared local override for cross-module machine settings (gitignored)
 
-Local config values take precedence over the shared config files, so each user can keep their own credentials,
-tenant URL, and workflow defaults without changing committed files.
+The UI/login config loader merges files separately in this order:
+
+1. `config/config.json` — shared UI/login defaults
+2. `config/project.json` — committed project template
+3. `config/project.local.json` — machine-specific overrides (gitignored)
+4. `config/config.local.json` — legacy local override (gitignored)
+
+Use `.local.json` files for machine-specific credentials, tenant URL, and workflow defaults so each user avoids touching committed files.
 
 ## Usage
 

@@ -2,9 +2,11 @@
 
 Welcome! Let's get your environment ready from a fresh clone.
 
-This guide follows the provider-client setup used in this repository:
-- Shared team defaults live in config/project.json.
-- Your personal machine-only settings live in config/project.local.json.
+This guide follows the config layering used in this repository:
+- Base shared defaults live in config/config.json.
+- config/project.json is the committed project template layered on top of those defaults.
+- Your personal machine-only overrides live in config/project.local.json.
+- A legacy local override file, config/config.local.json, may also be present in older setups.
 
 JSON is just a settings file written as key/value pairs.
 
@@ -62,14 +64,5 @@ py -3 -c "from config.config_loader import get_config; import urllib.request; ur
 Expected result:
 - You should see your resolved login URL printed.
 - You should see an HTTP status code, which confirms connectivity to your Foundry login endpoint.
-
-## Step 4: Committing the Guide
-
-Use these commands to commit only this documentation file:
-
-```bash
-git add SETUP_GUIDE.md
-git commit -m "docs: add local configuration wizard"
-```
 
 You are now configured with a safe local setup pattern for development.

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import re
+import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -553,8 +554,9 @@ def main() -> int:
 
 if __name__ == "__main__":
     code = main()
-    try:
-        input("Press Enter to close...")
-    except EOFError:
-        pass
+    if sys.stdin.isatty():
+        try:
+            input("Press Enter to close...")
+        except EOFError:
+            pass
     raise SystemExit(code)
