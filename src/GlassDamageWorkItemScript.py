@@ -8,7 +8,7 @@ from core.driver_manager import create_driver, quit_driver
 from config.config_loader import get_config
 from flows.LoginFlow import LoginFlow
 from flows.work_item_flow import get_work_items
-from flows.complaints_flows import detect_existing_complaints, handle_new_complaint
+from flows.complaints_flows import detect_pm_complaints, handle_new_complaint
 from flows.opcode_flows import select_opcode
 from flows.work_item_handler import WorkItemConfig
 from core.complaint_types import ComplaintType, GlassDamageType
@@ -32,7 +32,7 @@ def click_add_work_item(driver):
     try:
         log.info("[STEP] Clicking Add Work Item button...")
         # Use the provided class name to locate the button
-        button = driver.find_element(By.CLASS_NAME, "fleet-operations-pwa__create-item-button__1k9soug")
+        button = driver.find_element(By.CSS_SELECTOR, "[class*='fleet-operations-pwa__create-item-button']")
         button.click()
         log.info("[STEP] Successfully clicked Add Work Item button.")
         return True
@@ -45,7 +45,7 @@ def click_add_new_complaint(driver):
     try:
         log.info("[STEP] Clicking Add New Complaint button...")
         # Use the provided class name to locate the button
-        button = driver.find_element(By.CLASS_NAME, "fleet-operations-pwa__nextButton__5dy90n")
+        button = driver.find_element(By.CSS_SELECTOR, "[class*='fleet-operations-pwa__nextButton']")
         button.click()
         log.info("[STEP] Successfully clicked Add New Complaint button.")
         return True
@@ -58,7 +58,7 @@ def handle_drivability_screen(driver, answer_yes=True):
     try:
         log.info(f"[STEP] Clicking {'Yes' if answer_yes else 'No'} on Drivability screen...")
         # Find all drivable option buttons by class name
-        buttons = driver.find_elements(By.CLASS_NAME, "fleet-operations-pwa__drivable-option-button__yzn7ir")
+        buttons = driver.find_elements(By.CSS_SELECTOR, "[class*='fleet-operations-pwa__drivable-option-button']")
         if not buttons or len(buttons) < 2:
             raise Exception("Drivability option buttons not found or insufficient buttons present.")
         # Yes is the first button, No is the second
@@ -275,7 +275,7 @@ def select_glass_damage_option(driver, option_text="Glass Damage"):
     try:
         log.info(f"[STEP] Selecting glass damage option: '{option_text}' ...")
         # Find all damage option buttons by class name
-        buttons = driver.find_elements(By.CLASS_NAME, "fleet-operations-pwa__damage-option-button__yzn7ir")
+        buttons = driver.find_elements(By.CSS_SELECTOR, "[class*='fleet-operations-pwa__damage-option-button']")
         if not buttons:
             raise Exception("No damage option buttons found.")
         for button in buttons:
@@ -305,7 +305,7 @@ def click_submit_complaint(driver):
     try:
         log.info("[STEP] Clicking 'Submit Complaint' button ...")
         # Find all submit buttons by class name
-        buttons = driver.find_elements(By.CLASS_NAME, "fleet-operations-pwa__submit-button__yzn7ir")
+        buttons = driver.find_elements(By.CSS_SELECTOR, "[class*='fleet-operations-pwa__submit-button']")
         if not buttons:
             raise Exception("No submit buttons found.")
         for button in buttons:
@@ -335,7 +335,7 @@ def click_mileage_next(driver):
     try:
         log.info("[STEP] Clicking 'Next' button on Mileage screen ...")
         # Find all next buttons by class name
-        buttons = driver.find_elements(By.CLASS_NAME, "fleet-operations-pwa__nextButton__5dy90n")
+        buttons = driver.find_elements(By.CSS_SELECTOR, "[class*='fleet-operations-pwa__nextButton']")
         if not buttons:
             raise Exception("No 'Next' buttons found on Mileage screen.")
         for button in buttons:
@@ -417,7 +417,7 @@ def main():
                 try:
                     log.info(f"[MVA_VALIDATION] Waiting for vehicle properties to load for {mva}...")
                     WebDriverWait(driver, 30, poll_frequency=1.0).until(
-                        EC.presence_of_element_located((By.CSS_SELECTOR, "div.fleet-operations-pwa__vehicle-properties-container__1ad7kyc"))
+                        EC.presence_of_element_located((By.CSS_SELECTOR, "[class*='fleet-operations-pwa__vehicle-properties-container']"))
                     )
                     log.info(f"[MVA_VALIDATION] Vehicle properties loaded successfully for {mva}")
                 except TimeoutException:

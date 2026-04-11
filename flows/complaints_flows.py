@@ -85,7 +85,15 @@ def find_dialog(driver):
     locator = (By.CSS_SELECTOR, "div.bp6-dialog, div[class*='dialog']")
     return find_element(driver, locator)
 
-def detect_existing_complaints(driver, mva: str):
+# ----------------------------------------------------------------------------
+# AUTHOR:       Dirk Steele <dirk.avis@gmail.com>
+# DATE:         2026-04-11
+# DESCRIPTION:  Detect complaint tiles containing 'PM' in their text.
+#               Used by PM work item handler to find matching existing complaints.
+# VERSION:      1.0.0
+# NOTES:        Returns only tiles whose text contains 'PM'.
+# ----------------------------------------------------------------------------
+def detect_pm_complaints(driver, mva: str):
     """Detect complaint tiles containing 'PM' in their text."""
     try:
         time.sleep(3)  # wait for tiles to load
@@ -103,6 +111,41 @@ def detect_existing_complaints(driver, mva: str):
         return valid_tiles
     except Exception as e:
         log.error(f"[COMPLAINT][ERROR] {mva} — complaint detection failed → {e}")
+        return []
+
+
+# ----------------------------------------------------------------------------
+# AUTHOR:       Dirk Steele <dirk.avis@gmail.com>
+# DATE:         2026-04-11
+# DESCRIPTION:  Detect complaint tiles containing glass-related keywords.
+#               Used by GlassWorkItemHandler to find matching existing complaints.
+#               Keywords are intentionally narrow to avoid false positives
+#               (e.g. "replace" is excluded as it matches "brake pad replacement").
+# VERSION:      1.0.0
+# NOTES:        Returns list of matching tile elements; returns [] on exception.
+# ----------------------------------------------------------------------------
+def detect_glass_complaints(driver, mva: str = None) -> list:
+    """Detect complaint tiles containing glass keywords."""
+    glass_keywords = ["glass", "windshield", "crack", "chip", "window"]
+    try:
+        time.sleep(3)  # wait for tiles to load
+        tiles = driver.find_elements(
+            By.XPATH, "//div[contains(@class,'fleet-operations-pwa__complaintItem__')]"
+        )
+        log.debug(f"[COMPLAINT] {mva} — found {len(tiles)} total complaint tile(s)")
+
+        valid_tiles = [
+            t for t in tiles
+            if any(kw in t.text.lower() for kw in glass_keywords)
+        ]
+        log.debug(
+            f"[COMPLAINT] {mva} — filtered {len(valid_tiles)} glass-type complaint(s): "
+            f"{[t.text for t in valid_tiles]}"
+        )
+
+        return valid_tiles
+    except Exception as e:
+        log.error(f"[COMPLAINT][ERROR] {mva} — glass complaint detection failed → {e}")
         return []
 
 def find_pm_tiles(driver, mva: str):
