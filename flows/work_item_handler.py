@@ -193,9 +193,26 @@ class GlassWorkItemHandler(WorkItemHandler):
         damage_type_ui = self.map_damage_type_to_ui(config.damage_type, config.location)
         log.info(f"[GLASS] {config.mva} - Selecting UI damage type: {damage_type_ui}")
         result = create_new_complaint(self.driver, config.mva, complaint_type=damage_type_ui)
-        if result.get("status") == "created":
-            log.info(f"[GLASS] {config.mva} - New glass complaint created")
-        return result
+        if result.get("status") != "created":
+            return result
+        log.info(f"[GLASS] {config.mva} - New glass complaint created, continuing workflow")
+        # Step 7: Mileage -> Next
+        from flows.mileage_flows import complete_mileage_dialog
+        res = complete_mileage_dialog(self.driver, config.mva)
+        if res.get("status") != "ok":
+            return {"status": "failed", "reason": "mileage", "mva": config.mva}
+        # Step 8: OpCode -> Glass Repair/Replace (with fallback)
+        from flows.opcode_flows import select_opcode
+        from config.config_loader import get_config
+        opcode = get_config("glass_opcode_primary", "Glass Repair/Replace")
+        res = select_opcode(self.driver, config.mva, code_text=opcode)
+        if res.get("status") != "ok":
+            res = select_opcode(self.driver, config.mva, code_text=get_config("glass_opcode_fallback", "Glass"))
+        if res.get("status") != "ok":
+            return {"status": "failed", "reason": "opcode", "mva": config.mva}
+        # Steps 9-10: Create Work Item -> Done
+        from flows.finalize_flow import finalize_workitem
+        return finalize_workitem(self.driver, config.mva)
     
     # ----------------------------------------------------------------------------
     # AUTHOR:       Dirk Steele <dirk.avis@gmail.com>
