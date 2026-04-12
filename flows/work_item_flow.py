@@ -84,6 +84,26 @@ def create_new_workitem(driver, mva: str):
     return {"status": "created", "mva": mva}
 
 
+def check_existing_work_item(driver, mva: str, work_item_type: str = "GLASS") -> bool:
+    """
+    Return True if an open work item of the given type already exists for this MVA.
+    Filters to open/active tiles only and matches on work_item_type keyword.
+    Returns False on any exception — never raises.
+    """
+    try:
+        tiles = get_work_items(driver, mva)
+        keyword = work_item_type.lower()
+        for tile in tiles:
+            if keyword in tile.text.lower():
+                log.info(f"[WORKITEM] {mva} - existing open {work_item_type} work item found")
+                return True
+        log.info(f"[WORKITEM] {mva} - no open {work_item_type} work item found")
+        return False
+    except Exception as e:
+        log.error(f"[WORKITEM][ERROR] {mva} - check_existing_work_item failed: {e}")
+        return False
+
+
 def create_work_item_with_handler(driver, config, handler_type: str = "GLASS"):
     """
     Create a work item using the handler pattern.
