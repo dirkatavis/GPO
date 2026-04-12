@@ -88,7 +88,7 @@ def check_existing_work_item(driver, mva: str, work_item_type: str = "GLASS") ->
     """
     Return True if an open work item of the given type already exists for this MVA.
     Filters to open/active tiles only and matches on work_item_type keyword.
-    Returns False on any exception — never raises.
+    Raises on any exception so the caller can mark the MVA as failed.
     """
     try:
         tiles = get_work_items(driver, mva)

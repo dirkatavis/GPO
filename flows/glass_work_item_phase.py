@@ -43,7 +43,7 @@ def read_glass_claims(sheet_client, tab_name: str = "GlassClaims") -> list[dict]
         result.append({
             "mva": mva,
             "damage_type": row.get("Damage Type") or row.get("damage_type", "Replacement"),
-            "location": row.get("Location") or "WINDSHIELD",
+            "location": (row.get("Location") or "").strip() or "WINDSHIELD",
         })
     return result
 
@@ -52,23 +52,38 @@ class GlassClaimsUpdater:
     """
     Wraps a gspread worksheet to mark WorkItemCreated=Y for a given MVA.
     Implements the sheet_client interface expected by run_glass_work_item_phase().
+    Headers and the MVA→row-index map are fetched once and cached to avoid
+    O(n²) sheet reads when processing large manifests.
     """
 
     def __init__(self, worksheet):
         self._ws = worksheet
+        self._col_index: int | None = None      # 1-based column index for WorkItemCreated
+        self._mva_row: dict[str, int] | None = None  # MVA string → 1-based sheet row
+
+    def _ensure_cache(self) -> None:
+        """Populate column index and MVA→row map on first use."""
+        if self._col_index is not None:
+            return
+        headers = self._ws.row_values(1)
+        self._col_index = headers.index("WorkItemCreated") + 1  # 1-based
+        records = self._ws.get_all_records()
+        self._mva_row = {
+            str(row.get("MVA", "")).strip(): i
+            for i, row in enumerate(records, start=2)  # data starts at row 2
+            if str(row.get("MVA", "")).strip()
+        }
 
     def mark_work_item_created(self, mva: str, tab_name: str = "GlassClaims") -> None:
         """Find the row for this MVA and write 'Y' to the WorkItemCreated column."""
         try:
-            records = self._ws.get_all_records()
-            headers = self._ws.row_values(1)
-            col_index = headers.index("WorkItemCreated") + 1  # 1-based
-            for i, row in enumerate(records, start=2):  # data starts at row 2
-                if str(row.get("MVA", "")).strip() == str(mva).strip():
-                    self._ws.update_cell(i, col_index, "Y")
-                    log.info(f"[PHASE7] {mva} - WorkItemCreated marked Y in sheet")
-                    return
-            log.warning(f"[PHASE7] {mva} - MVA not found in sheet, could not mark WorkItemCreated")
+            self._ensure_cache()
+            row_index = self._mva_row.get(str(mva).strip())
+            if row_index is None:
+                log.warning(f"[PHASE7] {mva} - MVA not found in sheet, could not mark WorkItemCreated")
+                return
+            self._ws.update_cell(row_index, self._col_index, "Y")
+            log.info(f"[PHASE7] {mva} - WorkItemCreated marked Y in sheet")
         except Exception as e:
             log.error(f"[PHASE7] {mva} - Failed to mark WorkItemCreated: {e}")
 
@@ -90,6 +105,7 @@ def run_glass_work_item_phase(driver, manifest: list[dict], sheet_client=None,
         dict with keys: processed, created, skipped, failed
     """
     summary = {"processed": 0, "created": 0, "skipped": 0, "failed": 0}
+    handler = create_work_item_handler("GLASS", driver)
 
     for entry in manifest:
         mva = entry["mva"]
@@ -107,7 +123,6 @@ def run_glass_work_item_phase(driver, manifest: list[dict], sheet_client=None,
                 damage_type=entry.get("damage_type"),
                 location=entry.get("location"),
             )
-            handler = create_work_item_handler("GLASS", driver)
             result = handler.create_work_item(config)
 
             if result.get("status") == "created":
