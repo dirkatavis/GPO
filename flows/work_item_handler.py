@@ -31,6 +31,7 @@ class WorkItemHandler(ABC):
     def __init__(self, driver):
         """Initialize handler with WebDriver instance."""
         self.driver = driver
+        self._current_mva = None
     
     @abstractmethod
     def get_work_item_type(self) -> str:
@@ -42,6 +43,11 @@ class WorkItemHandler(ABC):
         """Determine if an existing complaint matches this work item type."""
         pass
     
+    @abstractmethod
+    def detect_complaints(self, driver) -> list:
+        """Return complaint tile elements relevant to this work item type."""
+        pass
+
     @abstractmethod
     def create_new_complaint(self, config: WorkItemConfig) -> Dict[str, Any]:
         """Create a new complaint for this work item type."""
@@ -63,6 +69,7 @@ class WorkItemHandler(ABC):
     # NOTES:        Used by all handler subclasses.
     # ----------------------------------------------------------------------------
     def create_work_item(self, config: WorkItemConfig) -> Dict[str, Any]:
+        self._current_mva = config.mva
         log.info(f"[WORKITEM] {config.mva} - Creating {self.get_work_item_type()} work item")
         # Step 1: Click Add Work Item button (common for all types)
         if not self._click_add_work_item_button(config):
@@ -105,10 +112,9 @@ class WorkItemHandler(ABC):
     # NOTES:        Used by all handler subclasses.
     # ----------------------------------------------------------------------------
     def _handle_complaint_flow(self, config: WorkItemConfig) -> Dict[str, Any]:
-        from flows.complaints_flows import detect_existing_complaints
         try:
             # Check for existing complaints that match this work item type
-            existing_complaints = detect_existing_complaints(self.driver, config.mva)
+            existing_complaints = self.detect_complaints(self.driver)
             for complaint in existing_complaints:
                 if self.should_handle_existing_complaint(complaint.text):
                     log.info(f"[{self.get_work_item_type()}] {config.mva} - Found matching existing complaint")
@@ -155,10 +161,24 @@ class GlassWorkItemHandler(WorkItemHandler):
         Determine if existing complaint is glass-related.
         Look for glass keywords in complaint text.
         """
-        glass_keywords = ["glass", "windshield", "crack", "chip", "replace"]
+        glass_keywords = ["glass", "windshield", "crack", "chip", "window"]
         complaint_lower = complaint_text.lower()
         return any(keyword in complaint_lower for keyword in glass_keywords)
     
+    # ----------------------------------------------------------------------------
+    # AUTHOR:       Dirk Steele <dirk.avis@gmail.com>
+    # DATE:         2026-04-11
+    # DESCRIPTION:  Detect existing glass complaint tiles for this MVA.
+    #               Delegates to detect_glass_complaints() from complaints_flows.
+    #               Uses _current_mva set at the start of create_work_item().
+    # VERSION:      1.0.0
+    # NOTES:        Called by _handle_complaint_flow() in the base class.
+    # ----------------------------------------------------------------------------
+    def detect_complaints(self, driver) -> list:
+        """Return glass complaint tile elements relevant to this work item type."""
+        from flows.complaints_flows import detect_glass_complaints
+        return detect_glass_complaints(driver, mva=self._current_mva)
+
     # ----------------------------------------------------------------------------
     # AUTHOR:       Dirk Steele <dirk.avis@gmail.com>
     # DATE:         2026-01-12
@@ -173,9 +193,26 @@ class GlassWorkItemHandler(WorkItemHandler):
         damage_type_ui = self.map_damage_type_to_ui(config.damage_type, config.location)
         log.info(f"[GLASS] {config.mva} - Selecting UI damage type: {damage_type_ui}")
         result = create_new_complaint(self.driver, config.mva, complaint_type=damage_type_ui)
-        if result.get("status") == "created":
-            log.info(f"[GLASS] {config.mva} - New glass complaint created")
-        return result
+        if result.get("status") != "created":
+            return result
+        log.info(f"[GLASS] {config.mva} - New glass complaint created, continuing workflow")
+        # Step 7: Mileage -> Next
+        from flows.mileage_flows import complete_mileage_dialog
+        res = complete_mileage_dialog(self.driver, config.mva)
+        if res.get("status") != "ok":
+            return {"status": "failed", "reason": "mileage", "mva": config.mva}
+        # Step 8: OpCode -> Glass Repair/Replace (with fallback)
+        from flows.opcode_flows import select_opcode
+        from config.config_loader import get_config
+        opcode = get_config("glass_opcode_primary", "Glass Repair/Replace")
+        res = select_opcode(self.driver, config.mva, code_text=opcode)
+        if res.get("status") != "ok":
+            res = select_opcode(self.driver, config.mva, code_text=get_config("glass_opcode_fallback", "Glass"))
+        if res.get("status") != "ok":
+            return {"status": "failed", "reason": "opcode", "mva": config.mva}
+        # Steps 9-10: Create Work Item -> Done
+        from flows.finalize_flow import finalize_workitem
+        return finalize_workitem(self.driver, config.mva)
     
     # ----------------------------------------------------------------------------
     # AUTHOR:       Dirk Steele <dirk.avis@gmail.com>
@@ -220,8 +257,10 @@ def create_work_item_handler(work_item_type: str, driver) -> WorkItemHandler:
     """
     if work_item_type.upper() == "GLASS":
         return GlassWorkItemHandler(driver)
-    # Additional handler types can be registered here when their workflows are defined.
-    # elif work_item_type.upper() == "PM":
-    #     return PMWorkItemHandler(driver)
+    # To add a new work item type:
+    # 1. Subclass WorkItemHandler
+    # 2. Implement: detect_complaints, should_handle_existing_complaint,
+    #    create_new_complaint, handle_existing_complaint
+    # 3. Register the type string here
     else:
         raise ValueError(f"Unsupported work item type: {work_item_type}")
