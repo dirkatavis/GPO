@@ -101,7 +101,7 @@ def check_existing_work_item(driver, mva: str, work_item_type: str = "GLASS") ->
         return False
     except Exception as e:
         log.error(f"[WORKITEM][ERROR] {mva} - check_existing_work_item failed: {e}")
-        return False
+        raise
 
 
 def create_work_item_with_handler(driver, config, handler_type: str = "GLASS"):

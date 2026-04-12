@@ -2,9 +2,9 @@
 # Standalone script — not part of the main GlassOrchestrator pipeline.
 # Reads from GlassClaims sheet, creates Compass work items for eligible MVAs.
 #
-# KNOWN LIMITATION: Location defaults to WINDSHIELD for all rows.
-# Side/rear damage is rare and handled manually by the operator.
-# When Orca scan data includes location, update read_glass_claims() to parse it.
+# Location is read from the sheet when explicitly provided.
+# If Location is blank or missing, it defaults to WINDSHIELD.
+# Side/rear damage remains uncommon and may still require operator review.
 #
 # ARCHITECTURE NOTE: Designed for extraction into the unified automation repo.
 # Manifest contract (list of plain dicts) and return contract (summary dict) are portable.
@@ -34,12 +34,43 @@ def read_glass_claims(sheet_client, tab_name: str = "GlassClaims") -> list[dict]
             continue
         if row.get("WorkItemCreated", "").strip():
             continue
+        mva = row.get("MVA")
+        if mva is None:
+            continue
+        mva = str(mva).strip()
+        if not mva:
+            continue
         result.append({
-            "mva": row["MVA"],
+            "mva": mva,
             "damage_type": row.get("Damage Type") or row.get("damage_type", "Replacement"),
             "location": row.get("Location") or "WINDSHIELD",
         })
     return result
+
+
+class GlassClaimsUpdater:
+    """
+    Wraps a gspread worksheet to mark WorkItemCreated=Y for a given MVA.
+    Implements the sheet_client interface expected by run_glass_work_item_phase().
+    """
+
+    def __init__(self, worksheet):
+        self._ws = worksheet
+
+    def mark_work_item_created(self, mva: str, tab_name: str = "GlassClaims") -> None:
+        """Find the row for this MVA and write 'Y' to the WorkItemCreated column."""
+        try:
+            records = self._ws.get_all_records()
+            headers = self._ws.row_values(1)
+            col_index = headers.index("WorkItemCreated") + 1  # 1-based
+            for i, row in enumerate(records, start=2):  # data starts at row 2
+                if str(row.get("MVA", "")).strip() == str(mva).strip():
+                    self._ws.update_cell(i, col_index, "Y")
+                    log.info(f"[PHASE7] {mva} - WorkItemCreated marked Y in sheet")
+                    return
+            log.warning(f"[PHASE7] {mva} - MVA not found in sheet, could not mark WorkItemCreated")
+        except Exception as e:
+            log.error(f"[PHASE7] {mva} - Failed to mark WorkItemCreated: {e}")
 
 
 def run_glass_work_item_phase(driver, manifest: list[dict], sheet_client=None,

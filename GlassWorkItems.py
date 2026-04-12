@@ -11,7 +11,7 @@ import gspread
 from core.driver_manager import create_driver, quit_driver
 from config.config_loader import get_config
 from flows.LoginFlow import LoginFlow
-from flows.glass_work_item_phase import read_glass_claims, run_glass_work_item_phase
+from flows.glass_work_item_phase import read_glass_claims, run_glass_work_item_phase, GlassClaimsUpdater
 from utils.logger import log
 
 SERVICE_ACCOUNT_JSON = get_config("service_account_json", "Service_account.json")
@@ -31,7 +31,7 @@ def main():
         login_result = login_flow.login_handler(username, password, login_id)
         if login_result.get("status") != "ok":
             log.error(f"[PHASE7] Login failed: {login_result}")
-            return
+            sys.exit(1)
 
         # Connect to Google Sheet
         gc = gspread.service_account(filename=SERVICE_ACCOUNT_JSON)
@@ -47,7 +47,8 @@ def main():
             return
 
         # Run phase
-        summary = run_glass_work_item_phase(driver, manifest, sheet_client=None, tab_name=SHEET_NAME)
+        sheet_updater = GlassClaimsUpdater(ws)
+        summary = run_glass_work_item_phase(driver, manifest, sheet_client=sheet_updater, tab_name=SHEET_NAME)
         log.info(f"[PHASE7] Complete — {summary}")
 
     finally:

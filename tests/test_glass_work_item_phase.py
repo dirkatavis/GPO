@@ -44,12 +44,13 @@ class TestGLAS1_CheckExistingWorkItem:
         with patch("flows.work_item_flow.get_work_items", return_value=tiles):
             assert check_existing_work_item(driver, "12345678", "GLASS") is False
 
-    def test_returns_false_on_exception(self):
-        """Returns False (does not raise) when get_work_items throws."""
+    def test_raises_on_exception(self):
+        """Re-raises when get_work_items throws so the runner can mark MVA as failed."""
         from flows.work_item_flow import check_existing_work_item
         driver = MagicMock()
         with patch("flows.work_item_flow.get_work_items", side_effect=Exception("boom")):
-            assert check_existing_work_item(driver, "12345678", "GLASS") is False
+            with pytest.raises(Exception, match="boom"):
+                check_existing_work_item(driver, "12345678", "GLASS")
 
     def test_case_insensitive_match(self):
         """Keyword match is case-insensitive."""
