@@ -21,7 +21,10 @@ def is_notification_eligible(row: dict) -> bool:
     Supports both 'damage_type' (internal) and 'Damage Type' (sheet) key formats.
     Missing or empty value defaults to eligible (Replacement).
     """
-    raw = row.get("Damage Type") or row.get("damage_type")
+    if "Damage Type" in row:
+        raw = row["Damage Type"]
+    else:
+        raw = row.get("damage_type")
     if not raw:
         return True
     normalized = raw.strip().title()

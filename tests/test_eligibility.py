@@ -100,7 +100,7 @@ class TestElig5_SheetStyleKey:
         """Neither key present → defaults to eligible."""
         assert is_notification_eligible({"MVA": "12345678"}) is True
 
-    def test_damage_type_key_takes_precedence_over_snake_case(self):
+    def test_sheet_style_key_takes_precedence_over_snake_case(self):
         """'Damage Type' key takes precedence over 'damage_type' when both are present."""
         row = {"Damage Type": "Repair", "damage_type": "Replacement"}
         assert is_notification_eligible(row) is False  # Repair wins because "Damage Type" key takes precedence

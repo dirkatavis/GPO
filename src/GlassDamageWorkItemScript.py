@@ -8,7 +8,7 @@ from core.driver_manager import create_driver, quit_driver
 from config.config_loader import get_config
 from flows.LoginFlow import LoginFlow
 from flows.work_item_flow import get_work_items
-from flows.complaints_flows import detect_pm_complaints, handle_new_complaint
+from flows.complaints_flows import detect_glass_complaints
 from flows.opcode_flows import select_opcode
 from flows.work_item_handler import WorkItemConfig
 from core.complaint_types import ComplaintType, GlassDamageType
