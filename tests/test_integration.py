@@ -311,7 +311,6 @@ class TestIT6_GlassWorkItemPhase:
         WorkItemConfig (mva, damage_type, location all matching manifest entry).
         """
         from flows.glass_work_item_phase import run_glass_work_item_phase
-        from flows.work_item_handler import WorkItemConfig
 
         driver = MagicMock()
         mock_handler = self._make_handler(status="created", mva="11111111")
