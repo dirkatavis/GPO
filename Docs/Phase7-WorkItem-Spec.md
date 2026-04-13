@@ -122,6 +122,48 @@ Only Phase E's PR targets main — that is the full feature merge.
 
 ---
 
+## Scenario Coverage Matrix
+
+All meaningful combinations of vehicle state that Phase 7 must handle correctly.
+Each scenario maps to one or more E2E tests. Gaps are flagged.
+
+### Work Item × Complaint State
+
+| # | Open Work Item | Glass Complaint | Expected Behavior | E2E Coverage |
+|---|---|---|---|---|
+| S1 | None | None | Create new glass complaint → create work item | E2E-2 ✓ |
+| S2 | None | Exists (glass) | Associate existing complaint → create work item | E2E-3 ✓ |
+| S3 | Open | Any / None | Skip — no duplicate created | E2E-1 ✓ |
+| S4 | Closed only | None | Create new complaint → create work item | **Not covered** |
+| S5 | None | Non-glass only | Create new glass complaint → create work item | **Not covered** |
+
+> **S4 note:** A closed work item should not block creation of a new one.
+> `check_existing_work_item()` filters to open/active only — S4 should already work correctly,
+> but has no dedicated E2E test to confirm it.
+>
+> **S5 note:** If only non-glass complaints exist (e.g. PM), the handler should not associate
+> them and should create a new glass complaint instead.
+
+### Location Variants
+
+| # | Location | Expected Complaint Type in Compass | E2E Coverage |
+|---|---|---|---|
+| L1 | WINDSHIELD (default) | Windshield Crack | E2E-2 ✓ |
+| L2 | SIDE | Side/Rear Window Damage | E2E-4 ✓ |
+| L3 | REAR | Side/Rear Window Damage | E2E-5 ✓ |
+| L4 | blank (sheet) | WINDSHIELD default applied | E2E-2 (implicit) ✓ |
+
+### Error / Edge Cases
+
+| # | Condition | Expected Behavior | E2E Coverage |
+|---|---|---|---|
+| E1 | Invalid / non-existent MVA | `failed` incremented, loop continues | E2E-6 ✓ |
+| E2 | Page load failure (cold start) | Navigation returns False, MVA skipped | smoke test ✓ |
+| E3 | Run Phase 7 twice on same MVA | Second run skips (WorkItemCreated=Y) | E2E-7 ✓ |
+| E4 | Mixed manifest | All MVAs attempted, counts correct | E2E-6 ✓ |
+
+---
+
 ## Step 0 — Determine Current Phase and Branch
 
 Before reading any files or writing any code, run:
