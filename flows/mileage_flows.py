@@ -48,7 +48,7 @@ def enter_mileage(driver, mva: str, mileage: int) -> dict:
 
         else:
             log.info(
-                "[MILEAGE][FAIL] {mva} - Next button not found after entering mileage"
+                f"[MILEAGE][FAIL] {mva} - Next button not found after entering mileage"
             )
             return {"status": "failed", "reason": "next_btn"}
 

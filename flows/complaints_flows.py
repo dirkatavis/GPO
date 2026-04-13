@@ -340,6 +340,12 @@ def create_new_complaint(driver, mva: str, complaint_type: str = "glass") -> dic
                 log.error(f"Failed to save screenshot: {se}")
             return {"status": "failed", "reason": "submit_info", "mva": mva}
 
+        # 5) Complaint confirmation -> Next (advances to mileage dialog)
+        if not click_next_in_dialog(driver, timeout=10):
+            log.warning(f"[GLASS][COMPLAINT][WARN] {mva} - Next not found after Submit — mileage dialog may not appear")
+            return {"status": "failed", "reason": "complaint_next", "mva": mva}
+        log.info(f"[GLASS][COMPLAINT][NEW] {mva} - Next clicked after Submit, advancing to mileage")
+
         return {"status": "created"}
 
     except Exception as e:
