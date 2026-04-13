@@ -154,11 +154,20 @@ class TestGLAS3_RunGlassWorkItemPhase:
     def _manifest(self, mvas: list[str]) -> list[dict]:
         return [{"mva": m, "damage_type": "Replacement", "location": "WINDSHIELD"} for m in mvas]
 
+    def _base_patches(self):
+        """Return context managers that stub navigation for all loop tests."""
+        return (
+            patch("flows.glass_work_item_phase.warmup_compass", return_value=True),
+            patch("flows.glass_work_item_phase.navigate_to_mva", return_value=True),
+        )
+
     def test_returns_summary_dict(self):
         """Always returns dict with processed/created/skipped/failed keys."""
         from flows.glass_work_item_phase import run_glass_work_item_phase
         driver = MagicMock()
-        with patch("flows.glass_work_item_phase.check_existing_work_item", return_value=True):
+        with patch("flows.glass_work_item_phase.warmup_compass", return_value=True), \
+             patch("flows.glass_work_item_phase.navigate_to_mva", return_value=True), \
+             patch("flows.glass_work_item_phase.check_existing_work_item", return_value=True):
             result = run_glass_work_item_phase(driver, self._manifest(["11111111"]))
         assert set(result.keys()) == {"processed", "created", "skipped", "failed"}
 
@@ -166,7 +175,9 @@ class TestGLAS3_RunGlassWorkItemPhase:
         """Increments skipped when work item already exists."""
         from flows.glass_work_item_phase import run_glass_work_item_phase
         driver = MagicMock()
-        with patch("flows.glass_work_item_phase.check_existing_work_item", return_value=True):
+        with patch("flows.glass_work_item_phase.warmup_compass", return_value=True), \
+             patch("flows.glass_work_item_phase.navigate_to_mva", return_value=True), \
+             patch("flows.glass_work_item_phase.check_existing_work_item", return_value=True):
             result = run_glass_work_item_phase(driver, self._manifest(["11111111"]))
         assert result["skipped"] == 1
         assert result["created"] == 0
@@ -177,7 +188,9 @@ class TestGLAS3_RunGlassWorkItemPhase:
         driver = MagicMock()
         mock_handler = MagicMock()
         mock_handler.create_work_item.return_value = {"status": "created", "mva": "11111111"}
-        with patch("flows.glass_work_item_phase.check_existing_work_item", return_value=False), \
+        with patch("flows.glass_work_item_phase.warmup_compass", return_value=True), \
+             patch("flows.glass_work_item_phase.navigate_to_mva", return_value=True), \
+             patch("flows.glass_work_item_phase.check_existing_work_item", return_value=False), \
              patch("flows.glass_work_item_phase.create_work_item_handler", return_value=mock_handler):
             result = run_glass_work_item_phase(driver, self._manifest(["11111111"]))
         assert result["created"] == 1
@@ -189,26 +202,47 @@ class TestGLAS3_RunGlassWorkItemPhase:
         driver = MagicMock()
         mock_handler = MagicMock()
         mock_handler.create_work_item.return_value = {"status": "failed", "mva": "11111111"}
-        with patch("flows.glass_work_item_phase.check_existing_work_item", return_value=False), \
+        with patch("flows.glass_work_item_phase.warmup_compass", return_value=True), \
+             patch("flows.glass_work_item_phase.navigate_to_mva", return_value=True), \
+             patch("flows.glass_work_item_phase.check_existing_work_item", return_value=False), \
              patch("flows.glass_work_item_phase.create_work_item_handler", return_value=mock_handler):
             result = run_glass_work_item_phase(driver, self._manifest(["11111111"]))
         assert result["failed"] == 1
         assert result["created"] == 0
 
+    def test_navigation_failure_increments_failed_skips_check_and_create(self):
+        """navigate_to_mva returning False increments failed; check and create not called."""
+        from flows.glass_work_item_phase import run_glass_work_item_phase
+        driver = MagicMock()
+        mock_check = MagicMock()
+        mock_handler = MagicMock()
+        with patch("flows.glass_work_item_phase.warmup_compass", return_value=True), \
+             patch("flows.glass_work_item_phase.navigate_to_mva", return_value=False), \
+             patch("flows.glass_work_item_phase.check_existing_work_item", mock_check), \
+             patch("flows.glass_work_item_phase.create_work_item_handler", return_value=mock_handler):
+            result = run_glass_work_item_phase(driver, self._manifest(["11111111"]))
+        assert result["failed"] == 1
+        assert result["created"] == 0
+        mock_check.assert_not_called()
+        mock_handler.create_work_item.assert_not_called()
+
     def test_continues_after_exception(self):
         """Loop never aborts — all MVAs attempted even after an exception."""
         from flows.glass_work_item_phase import run_glass_work_item_phase
         driver = MagicMock()
-        with patch("flows.glass_work_item_phase.check_existing_work_item", side_effect=Exception("boom")):
+        with patch("flows.glass_work_item_phase.warmup_compass", return_value=True), \
+             patch("flows.glass_work_item_phase.navigate_to_mva", return_value=True), \
+             patch("flows.glass_work_item_phase.check_existing_work_item", side_effect=Exception("boom")):
             result = run_glass_work_item_phase(driver, self._manifest(["11111111", "22222222"]))
         assert result["processed"] == 2
         assert result["failed"] == 2
 
     def test_empty_manifest_returns_zero_counts(self):
-        """Empty manifest returns all-zero summary."""
+        """Empty manifest returns all-zero summary without calling navigation."""
         from flows.glass_work_item_phase import run_glass_work_item_phase
         driver = MagicMock()
-        result = run_glass_work_item_phase(driver, [])
+        with patch("flows.glass_work_item_phase.warmup_compass", return_value=True):
+            result = run_glass_work_item_phase(driver, [])
         assert result == {"processed": 0, "created": 0, "skipped": 0, "failed": 0}
 
     def test_marks_work_item_created_in_sheet_on_success(self):
@@ -218,7 +252,9 @@ class TestGLAS3_RunGlassWorkItemPhase:
         mock_handler = MagicMock()
         mock_handler.create_work_item.return_value = {"status": "created", "mva": "11111111"}
         mock_sheet_client = MagicMock()
-        with patch("flows.glass_work_item_phase.check_existing_work_item", return_value=False), \
+        with patch("flows.glass_work_item_phase.warmup_compass", return_value=True), \
+             patch("flows.glass_work_item_phase.navigate_to_mva", return_value=True), \
+             patch("flows.glass_work_item_phase.check_existing_work_item", return_value=False), \
              patch("flows.glass_work_item_phase.create_work_item_handler", return_value=mock_handler):
             run_glass_work_item_phase(driver, self._manifest(["11111111"]),
                                       sheet_client=mock_sheet_client, tab_name="GlassClaims")
@@ -230,15 +266,18 @@ class TestGLAS3_RunGlassWorkItemPhase:
         driver = MagicMock()
         mock_handler = MagicMock()
         mock_handler.create_work_item.return_value = {"status": "created", "mva": "11111111"}
-        with patch("flows.glass_work_item_phase.check_existing_work_item", return_value=False), \
+        with patch("flows.glass_work_item_phase.warmup_compass", return_value=True), \
+             patch("flows.glass_work_item_phase.navigate_to_mva", return_value=True), \
+             patch("flows.glass_work_item_phase.check_existing_work_item", return_value=False), \
              patch("flows.glass_work_item_phase.create_work_item_handler", return_value=mock_handler):
-            # Should not raise
             run_glass_work_item_phase(driver, self._manifest(["11111111"]), sheet_client=None)
 
     def test_processed_count_equals_manifest_size(self):
         """processed always equals the number of entries in the manifest."""
         from flows.glass_work_item_phase import run_glass_work_item_phase
         driver = MagicMock()
-        with patch("flows.glass_work_item_phase.check_existing_work_item", return_value=True):
+        with patch("flows.glass_work_item_phase.warmup_compass", return_value=True), \
+             patch("flows.glass_work_item_phase.navigate_to_mva", return_value=True), \
+             patch("flows.glass_work_item_phase.check_existing_work_item", return_value=True):
             result = run_glass_work_item_phase(driver, self._manifest(["1", "2", "3"]))
         assert result["processed"] == 3
