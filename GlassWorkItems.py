@@ -20,6 +20,17 @@ SHEET_NAME = get_config("sheet_name", "GlassClaims")
 
 
 def main():
+    # Read the sheet first — only launch the browser if there is work to do
+    gc = gspread.service_account(filename=SERVICE_ACCOUNT_JSON)
+    sh = gc.open_by_key(SPREADSHEET_ID)
+    ws = sh.worksheet(SHEET_NAME)
+    manifest = read_glass_claims(ws)
+    log.info(f"[PHASE7] {len(manifest)} eligible MVA(s) to process")
+
+    if not manifest:
+        log.info("[PHASE7] No eligible MVAs found — nothing to do.")
+        return
+
     username = os.getenv("GLASS_LOGIN_USERNAME") or get_config("username")
     password = os.getenv("GLASS_LOGIN_PASSWORD") or get_config("password")
     login_id = os.getenv("GLASS_LOGIN_ID") or get_config("login_id")
@@ -32,19 +43,6 @@ def main():
         if login_result.get("status") != "ok":
             log.error(f"[PHASE7] Login failed: {login_result}")
             sys.exit(1)
-
-        # Connect to Google Sheet
-        gc = gspread.service_account(filename=SERVICE_ACCOUNT_JSON)
-        sh = gc.open_by_key(SPREADSHEET_ID)
-        ws = sh.worksheet(SHEET_NAME)
-
-        # Build manifest
-        manifest = read_glass_claims(ws)
-        log.info(f"[PHASE7] {len(manifest)} eligible MVA(s) to process")
-
-        if not manifest:
-            log.info("[PHASE7] No eligible MVAs found — nothing to do.")
-            return
 
         # Run phase
         sheet_updater = GlassClaimsUpdater(ws)
