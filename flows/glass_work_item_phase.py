@@ -109,7 +109,9 @@ def run_glass_work_item_phase(driver, manifest: list[dict], sheet_client=None,
     handler = create_work_item_handler("GLASS", driver)
 
     # Prime the Compass app before processing any real MVAs
-    warmup_compass(driver)
+    if not warmup_compass(driver):
+        log.error("[PHASE7] Compass warm-up failed — aborting run")
+        return summary
 
     for entry in manifest:
         mva = entry["mva"]

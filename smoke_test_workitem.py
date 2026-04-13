@@ -50,7 +50,9 @@ def main():
 
         # Step 2: Warm up Compass, then navigate to MVA
         log.info(f"[SMOKE] Step 2 — Warming up Compass and navigating to MVA {mva}...")
-        warmup_compass(driver)
+        if not warmup_compass(driver):
+            log.error(f"[SMOKE] Compass warm-up failed — aborting")
+            sys.exit(1)
         if not navigate_to_mva(driver, mva):
             log.error(f"[SMOKE] Could not navigate to MVA — aborting")
             sys.exit(1)
