@@ -182,6 +182,18 @@ class TestGLAS3_RunGlassWorkItemPhase:
         assert result["skipped"] == 1
         assert result["created"] == 0
 
+    def test_marks_sheet_on_skip_when_work_item_exists(self):
+        """Marks WorkItemCreated=Y in sheet when skipping an MVA with existing work item."""
+        from flows.glass_work_item_phase import run_glass_work_item_phase
+        driver = MagicMock()
+        mock_sheet_client = MagicMock()
+        with patch("flows.glass_work_item_phase.warmup_compass", return_value=True), \
+             patch("flows.glass_work_item_phase.navigate_to_mva", return_value=True), \
+             patch("flows.glass_work_item_phase.check_existing_work_item", return_value=True):
+            run_glass_work_item_phase(driver, self._manifest(["11111111"]),
+                                      sheet_client=mock_sheet_client, tab_name="GlassClaims")
+        mock_sheet_client.mark_work_item_created.assert_called_once_with("11111111", "GlassClaims")
+
     def test_creates_work_item_when_none_exists(self):
         """Increments created when handler succeeds."""
         from flows.glass_work_item_phase import run_glass_work_item_phase

@@ -127,6 +127,8 @@ def run_glass_work_item_phase(driver, manifest: list[dict], sheet_client=None,
             if check_existing_work_item(driver, mva, work_item_type="GLASS"):
                 log.info(f"[PHASE7] {mva} - Open glass work item already exists, skipping")
                 summary["skipped"] += 1
+                if sheet_client is not None:
+                    sheet_client.mark_work_item_created(mva, tab_name)
                 continue
 
             config = WorkItemConfig(
