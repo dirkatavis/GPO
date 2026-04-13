@@ -315,7 +315,9 @@ class TestIT6_GlassWorkItemPhase:
         driver = MagicMock()
         mock_handler = self._make_handler(status="created", mva="11111111")
 
-        with patch("flows.glass_work_item_phase.check_existing_work_item", return_value=False), \
+        with patch("flows.glass_work_item_phase.warmup_compass", return_value=True), \
+             patch("flows.glass_work_item_phase.navigate_to_mva", return_value=True), \
+             patch("flows.glass_work_item_phase.check_existing_work_item", return_value=False), \
              patch("flows.glass_work_item_phase.create_work_item_handler", return_value=mock_handler):
             run_glass_work_item_phase(
                 driver,
@@ -339,7 +341,9 @@ class TestIT6_GlassWorkItemPhase:
         mock_handler = self._make_handler(status="created", mva="22222222")
         check_results = [True, False]  # first MVA skipped, second created
 
-        with patch("flows.glass_work_item_phase.check_existing_work_item",
+        with patch("flows.glass_work_item_phase.warmup_compass", return_value=True), \
+             patch("flows.glass_work_item_phase.navigate_to_mva", return_value=True), \
+             patch("flows.glass_work_item_phase.check_existing_work_item",
                    side_effect=check_results), \
              patch("flows.glass_work_item_phase.create_work_item_handler",
                    return_value=mock_handler):
@@ -367,7 +371,9 @@ class TestIT6_GlassWorkItemPhase:
         mock_handler = MagicMock()
         mock_handler.create_work_item.side_effect = Exception("Compass timeout")
 
-        with patch("flows.glass_work_item_phase.check_existing_work_item", return_value=False), \
+        with patch("flows.glass_work_item_phase.warmup_compass", return_value=True), \
+             patch("flows.glass_work_item_phase.navigate_to_mva", return_value=True), \
+             patch("flows.glass_work_item_phase.check_existing_work_item", return_value=False), \
              patch("flows.glass_work_item_phase.create_work_item_handler",
                    return_value=mock_handler):
             result = run_glass_work_item_phase(
@@ -406,7 +412,9 @@ class TestIT6_GlassWorkItemPhase:
         mock_handler = self._make_handler(status="created", mva="11111111")
         mock_sheet = self._make_sheet_client()
 
-        with patch("flows.glass_work_item_phase.check_existing_work_item", return_value=False), \
+        with patch("flows.glass_work_item_phase.warmup_compass", return_value=True), \
+             patch("flows.glass_work_item_phase.navigate_to_mva", return_value=True), \
+             patch("flows.glass_work_item_phase.check_existing_work_item", return_value=False), \
              patch("flows.glass_work_item_phase.create_work_item_handler",
                    return_value=mock_handler):
             run_glass_work_item_phase(
