@@ -18,6 +18,7 @@
 import time
 
 from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
@@ -25,6 +26,16 @@ from config.config_loader import get_config
 from pages.mva_input_page import MVAInputPage
 from pages.vehicle_properties_page import VehiclePropertiesPage
 from utils.logger import log
+
+
+def _dismiss_open_dialogs(driver) -> None:
+    """Press Escape to close any open dialog before attempting navigation."""
+    try:
+        from selenium.webdriver.common.action_chains import ActionChains
+        ActionChains(driver).send_keys(Keys.ESCAPE).perform()
+        time.sleep(0.5)
+    except Exception:
+        pass
 
 
 def _wait_for_input(driver, timeout: int = 30):
@@ -97,15 +108,28 @@ def navigate_to_mva(driver, mva: str, timeout: int = 30) -> bool:
     """
     log.info(f"[NAV] Navigating to MVA {mva}...")
     try:
+        # Dismiss any open dialog left from a previous failed flow before looking for input
+        _dismiss_open_dialogs(driver)
+
         input_field = _wait_for_input(driver, timeout=timeout)
+        if not input_field:
+            # One retry after Escape in case a dialog was blocking
+            log.warning(f"[NAV] {mva} — input not found, retrying after Escape")
+            _dismiss_open_dialogs(driver)
+            input_field = _wait_for_input(driver, timeout=10)
         if not input_field:
             log.error(f"[NAV] {mva} — MVA input field not clickable")
             return False
 
         input_field.clear()
-        time.sleep(0.5)
         input_field.send_keys(mva)
         log.info(f"[NAV] {mva} — MVA entered")
+
+        # Wait for Compass to debounce and begin loading the new vehicle.
+        # Without this sleep the 'Add Work Item' check below is satisfied
+        # immediately by the previous vehicle's page, causing find_mva_echo
+        # to time out looking for the new MVA.
+        time.sleep(2)
 
         # Wait for 'Add Work Item' button — always present on a loaded MVA page
         # regardless of whether work items exist (unlike scan-record__ which only
@@ -125,7 +149,7 @@ def navigate_to_mva(driver, mva: str, timeout: int = 30) -> bool:
         # navigate to the vehicle — app may not have been fully initialized.
         props_page = VehiclePropertiesPage(driver)
         last8 = mva[-8:] if len(mva) >= 8 else mva
-        echo = props_page.find_mva_echo(last8, timeout=10)
+        echo = props_page.find_mva_echo(last8, timeout=20)
         if not echo:
             log.error(
                 f"[NAV] {mva} — vehicle detail panel not found. "

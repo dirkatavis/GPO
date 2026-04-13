@@ -340,11 +340,39 @@ def create_new_complaint(driver, mva: str, complaint_type: str = "glass") -> dic
                 log.error(f"Failed to save screenshot: {se}")
             return {"status": "failed", "reason": "submit_info", "mva": mva}
 
-        # 5) Complaint confirmation -> Next (advances to mileage dialog)
+        # 5) After Submit, Compass returns to the complaint list showing the new complaint.
+        #    Select the glass tile and click Next to advance to mileage.
+        time.sleep(2)
+        tiles = driver.find_elements(
+            By.XPATH, "//div[contains(@class,'fleet-operations-pwa__complaintItem__')]"
+        )
+        glass_tile = next(
+            (t for t in tiles if any(kw in t.text.lower() for kw in ["glass", "windshield", "crack", "chip", "window"])),
+            None
+        )
+        if glass_tile:
+            try:
+                glass_tile.click()
+                log.info(f"[GLASS][COMPLAINT][NEW] {mva} - glass complaint tile selected after Submit")
+            except Exception as e:
+                log.warning(f"[GLASS][COMPLAINT][NEW][WARN] {mva} - could not click glass tile after Submit: {e}")
+        else:
+            log.warning(f"[GLASS][COMPLAINT][NEW][WARN] {mva} - glass tile not found after Submit, attempting Next anyway")
+
         if not click_next_in_dialog(driver, timeout=10):
-            log.warning(f"[GLASS][COMPLAINT][WARN] {mva} - Next not found after Submit — mileage dialog may not appear")
+            log.warning(f"[GLASS][COMPLAINT][WARN] {mva} - Next not found after complaint selection")
+            try:
+                import os
+                from utils.project_paths import ProjectPaths
+                artifacts_dir = os.path.join(ProjectPaths.get_project_root(), "artifacts")
+                os.makedirs(artifacts_dir, exist_ok=True)
+                screenshot_path = os.path.join(artifacts_dir, f"complaint_next_error_{mva}.png")
+                driver.save_screenshot(screenshot_path)
+                log.info(f"[GLASS][COMPLAINT][NEW] Screenshot saved: {screenshot_path}")
+            except Exception:
+                pass
             return {"status": "failed", "reason": "complaint_next", "mva": mva}
-        log.info(f"[GLASS][COMPLAINT][NEW] {mva} - Next clicked after Submit, advancing to mileage")
+        log.info(f"[GLASS][COMPLAINT][NEW] {mva} - Next clicked, advancing to mileage")
 
         return {"status": "created"}
 
