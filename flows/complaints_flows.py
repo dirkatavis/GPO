@@ -3,7 +3,7 @@ import os
 
 from selenium.webdriver.common.by import By
 from utils.logger import log
-from utils.ui_helpers import (click_element, find_element , find_elements)
+from utils.ui_helpers import (click_element, find_element, find_elements, save_failure_screenshot)
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import NoSuchElementException
@@ -253,6 +253,7 @@ def create_new_complaint(driver, mva: str, complaint_type: str = "glass", drivab
             or click_element(driver, (By.XPATH, "//button[normalize-space()='Create New Complaint']"))
         ):
             log.warning(f"[GLASS][COMPLAINT][NEW][WARN] {mva} - could not click Add/Create New Complaint")
+            save_failure_screenshot(driver, mva, "add_new_complaint")
             return {"status": "failed", "reason": "add_btn"}
         log.info(f"[FLOW] {mva} - Click Add New Complaint — PASSED")
         _step_pause("after Add New Complaint")
@@ -260,6 +261,7 @@ def create_new_complaint(driver, mva: str, complaint_type: str = "glass", drivab
         # 2. Handle Drivability — glass damage is not drivable ("No")
         if not click_element(driver, (By.XPATH, f"//button[normalize-space()='{drivability}']"), timeout=10, desc=f"Drivability {drivability}"):
             log.warning(f"[GLASS][COMPLAINT][NEW][WARN] {mva} - could not click '{drivability}' in Drivability step")
+            save_failure_screenshot(driver, mva, "drivability")
             return {"status": "failed", "reason": "drivability"}
         log.info(f"[FLOW] {mva} - Click {drivability} Not drivable — PASSED")
         _step_pause("after Drivability")
@@ -270,6 +272,7 @@ def create_new_complaint(driver, mva: str, complaint_type: str = "glass", drivab
         glass_damage_label = ComplaintType.GLASS_DAMAGE.value
         if not click_element(driver, (By.XPATH, f"//button[normalize-space()='{glass_damage_label}']"), timeout=10, desc="Glass Damage complaint type"):
             log.warning(f"[GLASS][COMPLAINT][WARN] {mva} - Complaint type '{glass_damage_label}' not found")
+            save_failure_screenshot(driver, mva, "glass_damage_tile")
             return {"status": "failed", "reason": "complaint_type", "mva": mva}
         log.info(f"[FLOW] {mva} - Click Glass Damage tile — PASSED")
         _step_pause("after Glass Damage type selected")
@@ -320,17 +323,7 @@ def create_new_complaint(driver, mva: str, complaint_type: str = "glass", drivab
             time.sleep(2)  # allow auto-advance to Additional Info screen
         else:
             log.warning(f"[GLASS][COMPLAINT][WARN] {mva} - Glass damage type '{damage_label}' not found")
-            # Diagnostic: log page source
-            try:
-                log.error(driver.page_source)
-                # Ensure artifacts directory exists
-                artifacts_dir = os.path.join(ProjectPaths.get_project_root(), "artifacts")
-                os.makedirs(artifacts_dir, exist_ok=True)
-                screenshot_path = os.path.join(artifacts_dir, f"glass_damage_type_error_{mva}.png")
-                driver.save_screenshot(screenshot_path)
-                log.info(f"Saved screenshot to {screenshot_path}")
-            except Exception as se:
-                log.error(f"Failed to save screenshot: {se}")
+            save_failure_screenshot(driver, mva, "damage_subtype")
             return {"status": "failed", "reason": "glass_damage_type", "mva": mva}
 
         # 4) Additional Info screen -> Submit (robust)
@@ -341,14 +334,7 @@ def create_new_complaint(driver, mva: str, complaint_type: str = "glass", drivab
             time.sleep(2)
         else:
             log.warning(f"[GLASS][COMPLAINT][WARN] {mva} - could not submit Additional Info")
-            try:
-                artifacts_dir = os.path.join(ProjectPaths.get_project_root(), "artifacts")
-                os.makedirs(artifacts_dir, exist_ok=True)
-                screenshot_path = os.path.join(artifacts_dir, f"submit_complaint_error_{mva}.png")
-                driver.save_screenshot(screenshot_path)
-                log.info(f"Saved screenshot to {screenshot_path}")
-            except Exception as se:
-                log.error(f"Failed to save screenshot: {se}")
+            save_failure_screenshot(driver, mva, "submit_complaint")
             return {"status": "failed", "reason": "submit_info", "mva": mva}
 
         # After Submit, Compass transitions to the mileage dialog.
@@ -357,6 +343,7 @@ def create_new_complaint(driver, mva: str, complaint_type: str = "glass", drivab
 
     except Exception as e:
         log.error(f"[GLASS][COMPLAINT][NEW][ERROR] {mva} - creation failed -> {e}")
+        save_failure_screenshot(driver, mva, "exception")
         return {"status": "failed", "reason": "exception"}
 
 def click_next_in_dialog(driver, timeout: int = 10) -> bool:

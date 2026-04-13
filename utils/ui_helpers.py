@@ -13,6 +13,26 @@ UI Helper utilities for Selenium interactions.
 Provides common helper functions for finding elements, clicking, sending text, etc.
 """
 
+def save_failure_screenshot(driver, mva: str, step: str) -> None:
+    """
+    Save a screenshot to artifacts/ when a flow step fails.
+    Filename: failure_<mva>_<step>_<timestamp>.png
+    Logs the path so it appears in the run log.
+    """
+    try:
+        import time as _time
+        artifacts_dir = os.path.join(ProjectPaths.get_project_root(), "artifacts")
+        os.makedirs(artifacts_dir, exist_ok=True)
+        ts = int(_time.time())
+        safe_step = step.replace(" ", "_").replace("/", "-")
+        filename = f"failure_{mva}_{safe_step}_{ts}.png"
+        path = os.path.join(artifacts_dir, filename)
+        driver.save_screenshot(path)
+        log.info(f"[FLOW] {mva} - SCREENSHOT saved: artifacts/{filename}")
+    except Exception as e:
+        log.warning(f"[FLOW] {mva} - screenshot failed: {e}")
+
+
 def _dump_artifacts(driver, prefix="debug"):
     """
     Debug utility: save screenshot and page source to artifacts directory.

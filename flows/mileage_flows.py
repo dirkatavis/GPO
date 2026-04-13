@@ -1,7 +1,7 @@
 import time
 from utils.logger import log
 from selenium.webdriver.common.by import By
-from utils.ui_helpers import click_element, send_text
+from utils.ui_helpers import click_element, send_text, save_failure_screenshot
 
 
 def complete_mileage_dialog(driver, mva: str) -> dict:
@@ -13,6 +13,7 @@ def complete_mileage_dialog(driver, mva: str) -> dict:
             return {"status": "ok"}
         else:
             log.info(f"[MILEAGE][FAIL] {mva} - Next button not found")
+            save_failure_screenshot(driver, mva, "mileage_next")
             return {"status": "failed", "reason": "next_btn"}
     except Exception as e:
         log.error(f"[MILEAGE][ERROR] {mva} - exception -> {e}")

@@ -5,7 +5,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
 from utils.logger import log
-from utils.ui_helpers import find_element
+from utils.ui_helpers import find_element, save_failure_screenshot
 from config.config_loader import get_config
 
 _OPCODE_DIALOG_READY_XPATH = "//div[contains(@class,'opCodeText')]"
@@ -37,6 +37,7 @@ def select_opcode(driver, mva: str, code_text: str = None) -> dict:
         )
     except Exception:
         log.warning(f"[WORKITEM][WARN] {mva} - Opcode dialog did not appear within 15s")
+        save_failure_screenshot(driver, mva, "opcode_dialog")
         return {"status": "failed", "reason": "opcode_not_found"}
 
     # Match directly on the text div — avoids dependency on the parent container's
@@ -60,6 +61,7 @@ def select_opcode(driver, mva: str, code_text: str = None) -> dict:
             f"[WORKITEM][WARN] {mva} - Opcode '{code_text}' not found. "
             f"Found {len(all_texts)} opCodeText div(s): {', '.join(found_texts) or 'none'}"
         )
+        save_failure_screenshot(driver, mva, "opcode_not_found")
         return {"status": "failed", "reason": "opcode_not_found"}
     else:
         log.debug(f" found {len(tiles)} matching opcode text div(s)")
