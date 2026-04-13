@@ -11,8 +11,11 @@ def finalize_workitem(driver, mva: str) -> dict:
     Finalize the Work Item creation process.
     Steps:
       1. Click 'Create Work Item'
-      2. Wait for Work Item tiles to appear
-      3. Complete the Work Item (mark Done)
+      2. Verify Work Item tile is present
+      3. Click 'Done' to return to the MVA page
+
+    Returns {"status": "created"} on success. Glass work items are left Open —
+    they are not marked complete here; that is the technician's responsibility.
     """
     log.debug(f"[FINALIZE] {mva} - Finalizing work item.")
     try:

@@ -5,8 +5,12 @@ This document defines the requirements for a Python automation script that proce
 
 ## Functional Requirements
 
+> **Note:** The CSV-based input below describes the original standalone script design.
+> Phase 7 (see below) supersedes this with Google Sheet input. The CSV flow is legacy/out-of-scope
+> for the current implementation.
+
 ### 1. MVA Processing
-- The script shall read a list of MVAs from a CSV file (default: `data/mva.csv`).
+- The script shall read a list of MVAs from a CSV file (default: `data/mva.csv`). *(legacy — see Phase 7)*
 - For each MVA, the script shall:
   - Log the start of the review for the MVA.
 

@@ -161,7 +161,11 @@ def main():
         log.info(f"[SMOKE] {'=' * 50}")
 
     finally:
-        input("\n[SMOKE] Press Enter to close the browser...")
+        if sys.stdin.isatty():
+            try:
+                input("\n[SMOKE] Press Enter to close the browser...")
+            except EOFError:
+                pass
         quit_driver()
         log.info(f"[SMOKE] Browser closed.")
 

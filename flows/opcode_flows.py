@@ -11,6 +11,17 @@ from config.config_loader import get_config
 _OPCODE_DIALOG_READY_XPATH = "//div[contains(@class,'opCodeText')]"
 
 
+def _xpath_literal(value: str) -> str:
+    """Return an XPath string literal that safely handles single and double quotes."""
+    if "'" not in value:
+        return f"'{value}'"
+    if '"' not in value:
+        return f'"{value}"'
+    # Contains both — use concat()
+    parts = value.split("'")
+    return "concat(" + ",\"'\",".join(f"'{p}'" for p in parts) + ")"
+
+
 def select_opcode(driver, mva: str, code_text: str = None) -> dict:
     """Select an opcode by visible text from the opcode dialog."""
     if code_text is None:
@@ -32,7 +43,7 @@ def select_opcode(driver, mva: str, code_text: str = None) -> dict:
     # hash-suffixed class name (opCodeItem__<hash> varies per Compass build).
     # Use contains() rather than exact normalize-space() equality because icon-font
     # glyphs in sibling/child elements can bleed into the element's text value.
-    xpath = f"//div[contains(@class,'opCodeText')][contains(normalize-space(),'{code_text}')]"
+    xpath = f"//div[contains(@class,'opCodeText')][contains(normalize-space(),{_xpath_literal(code_text)})]"
     log.debug(f" searching for opcode text div -> {xpath}")
 
     tiles = driver.find_elements(By.XPATH, xpath)
@@ -65,6 +76,6 @@ def find_opcode_tile(driver, name: str):
     log.debug(f"[OPCODE] Finding opcode tile: {name}")
     locator = (
         By.XPATH,
-        f"//div[contains(@class,'opCodeText')][contains(normalize-space(),'{name}')]",
+        f"//div[contains(@class,'opCodeText')][contains(normalize-space(),{_xpath_literal(name)})]",
     )
     return find_element(driver, locator)
