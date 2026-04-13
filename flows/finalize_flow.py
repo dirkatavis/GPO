@@ -32,15 +32,14 @@ def finalize_workitem(driver, mva: str) -> dict:
 
         log.info(f"[WORKITEM] {mva} - Work Item created successfully ({len(tiles)} total)")
 
-        # Step 3: Complete the Work Item (lazy import to avoid circular import)
-        from flows.work_item_flow import complete_pm_workitem
-        res = complete_pm_workitem(driver, mva)
-        if res.get("status") != "ok":
-            log.warning(f"[WORKITEM][WARN] {mva} - could not complete Work Item")
-            return {"status": "failed", "reason": "complete", "mva": mva}
+        # Step 3: Click Done to return to the MVA page.
+        # Glass work items stay Open — they are not marked complete here.
+        if not click_element(driver, (By.XPATH, "//button[normalize-space()='Done']"), timeout=10):
+            log.warning(f"[WORKITEM][WARN] {mva} - 'Done' button not found after work item creation")
+            return {"status": "failed", "reason": "done_btn", "mva": mva}
 
-        log.info(f"[WORKITEM] {mva} - Work Item finalized and closed")
-        return {"status": "closed", "mva": mva}
+        log.info(f"[WORKITEM] {mva} - Work Item finalized — Done clicked")
+        return {"status": "created", "mva": mva}
 
     except Exception as e:
         log.error(f"[WORKITEM][ERROR] {mva} - finalize_workitem exception → {e}")
