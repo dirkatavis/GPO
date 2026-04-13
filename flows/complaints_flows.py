@@ -337,8 +337,18 @@ def create_new_complaint(driver, mva: str, complaint_type: str = "glass", drivab
             save_failure_screenshot(driver, mva, "submit_complaint")
             return {"status": "failed", "reason": "submit_info", "mva": mva}
 
-        # After Submit, Compass transitions to the mileage dialog.
-        # The caller (work_item_handler) is responsible for clicking Next on the mileage dialog.
+        # After Submit, Compass returns to the complaint list screen.
+        # Click 'Add New Complaint' to proceed to the work item creation steps.
+        _step_pause("after Submit Complaint — before Add New Complaint")
+        if not (
+            click_element(driver, (By.XPATH, "//button[normalize-space()='Add New Complaint']"), timeout=10)
+            or click_element(driver, (By.XPATH, "//button[normalize-space()='Create New Complaint']"), timeout=5)
+        ):
+            log.warning(f"[GLASS][COMPLAINT][NEW][WARN] {mva} - Add New Complaint not found after Submit")
+            save_failure_screenshot(driver, mva, "post_submit_add_new_complaint")
+            return {"status": "failed", "reason": "post_submit_add_btn"}
+        log.info(f"[FLOW] {mva} - Click Add New Complaint (post-submit) — PASSED")
+
         return {"status": "created"}
 
     except Exception as e:
