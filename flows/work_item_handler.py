@@ -144,13 +144,11 @@ class GlassWorkItemHandler(WorkItemHandler):
                 return GlassDamageType.SIDE_REAR_WINDOW_DAMAGE.value
         else:
             # Replacement operations
-            if loc in ("FRONT", "WINDSHIELD"):
-                return GlassDamageType.WINDSHIELD_CRACK.value
-            elif loc in ("SIDE", "REAR", "TOP", "BACK"):
+            if loc in ("SIDE", "REAR", "TOP", "BACK"):
                 return GlassDamageType.SIDE_REAR_WINDOW_DAMAGE.value
             else:
-                # Unknown location defaults to unknown damage type
-                return GlassDamageType.UNKNOWN.value
+                # WINDSHIELD, FRONT, N/A, blank, or any unrecognised value → Windshield Crack
+                return GlassDamageType.WINDSHIELD_CRACK.value
     
     def get_work_item_type(self) -> str:
         """Return the work item type identifier."""
@@ -192,18 +190,26 @@ class GlassWorkItemHandler(WorkItemHandler):
         # Map CSV damage type/location to UI button text
         damage_type_ui = self.map_damage_type_to_ui(config.damage_type, config.location)
         log.info(f"[GLASS] {config.mva} - Selecting UI damage type: {damage_type_ui}")
-        result = create_new_complaint(self.driver, config.mva, complaint_type=damage_type_ui)
+        result = create_new_complaint(self.driver, config.mva, complaint_type=damage_type_ui, drivability="No")
         if result.get("status") != "created":
             return result
         log.info(f"[GLASS] {config.mva} - New glass complaint created, continuing workflow")
         # Step 7: Mileage -> Next
         from flows.mileage_flows import complete_mileage_dialog
+        from config.config_loader import get_config
+        import time as _time
+        step_delay = float(get_config("step_delay", 0))
+        if step_delay > 0:
+            log.info(f"[STEP] before mileage — waiting {step_delay}s")
+            _time.sleep(step_delay)
         res = complete_mileage_dialog(self.driver, config.mva)
         if res.get("status") != "ok":
             return {"status": "failed", "reason": "mileage", "mva": config.mva}
         # Step 8: OpCode -> Glass Repair/Replace (with fallback)
         from flows.opcode_flows import select_opcode
-        from config.config_loader import get_config
+        if step_delay > 0:
+            log.info(f"[STEP] before opcode — waiting {step_delay}s")
+            _time.sleep(step_delay)
         opcode = get_config("glass_opcode_primary", "Glass Repair/Replace")
         res = select_opcode(self.driver, config.mva, code_text=opcode)
         if res.get("status") != "ok":
@@ -212,6 +218,9 @@ class GlassWorkItemHandler(WorkItemHandler):
             return {"status": "failed", "reason": "opcode", "mva": config.mva}
         # Steps 9-10: Create Work Item -> Done
         from flows.finalize_flow import finalize_workitem
+        if step_delay > 0:
+            log.info(f"[STEP] before finalize — waiting {step_delay}s")
+            _time.sleep(step_delay)
         return finalize_workitem(self.driver, config.mva)
     
     # ----------------------------------------------------------------------------

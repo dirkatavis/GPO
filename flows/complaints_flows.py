@@ -15,6 +15,14 @@ from config.config_loader import get_config
 
 _DEFAULT_DRIVABILITY = get_config("default_drivability", "Yes")
 _GLASS_OPCODE_FALLBACK = get_config("glass_opcode_fallback", "Glass")
+_STEP_DELAY = float(get_config("step_delay", 0))
+
+
+def _step_pause(label: str = "") -> None:
+    """Pause between steps when step_delay > 0. Set step_delay in config for debugging."""
+    if _STEP_DELAY > 0:
+        log.info(f"[STEP] {label} — waiting {_STEP_DELAY}s")
+        time.sleep(_STEP_DELAY)
 
 
 
@@ -233,7 +241,7 @@ def associate_existing_complaint(driver, mva: str) -> dict:
         log.warning(f"[GLASS][COMPLAINT][WARN] {mva} - complaint association failed → {e}")
         return {"status": "failed", "reason": "exception", "mva": mva}
 
-def create_new_complaint(driver, mva: str, complaint_type: str = "glass") -> dict:
+def create_new_complaint(driver, mva: str, complaint_type: str = "glass", drivability: str = "No") -> dict:
     """Create a new complaint when no suitable glass complaint exists."""
     log.debug(f"[GLASS][COMPLAINT] {mva} - Creating new glass complaint.")
     log.info(f"[GLASS][COMPLAINT][NEW] {mva} - creating new glass complaint")
@@ -247,12 +255,14 @@ def create_new_complaint(driver, mva: str, complaint_type: str = "glass") -> dic
             log.warning(f"[GLASS][COMPLAINT][NEW][WARN] {mva} - could not click Add/Create New Complaint")
             return {"status": "failed", "reason": "add_btn"}
         log.info(f"[GLASS][COMPLAINT][NEW] {mva} - Add/Create New Complaint clicked")
+        _step_pause("after Add New Complaint")
 
-        # 2. Handle Drivability (Yes/No). Simplest case -> always configured answer
-        if not click_element(driver, (By.XPATH, f"//button[normalize-space()='{_DEFAULT_DRIVABILITY}']"), timeout=10, desc=f"Drivability {_DEFAULT_DRIVABILITY}"):
-            log.warning(f"[GLASS][COMPLAINT][NEW][WARN] {mva} - could not click {_DEFAULT_DRIVABILITY} in Drivability step")
+        # 2. Handle Drivability — glass damage is not drivable ("No")
+        if not click_element(driver, (By.XPATH, f"//button[normalize-space()='{drivability}']"), timeout=10, desc=f"Drivability {drivability}"):
+            log.warning(f"[GLASS][COMPLAINT][NEW][WARN] {mva} - could not click '{drivability}' in Drivability step")
             return {"status": "failed", "reason": "drivability"}
-        log.info(f"[GLASS][COMPLAINT][NEW] {mva} - Drivability {_DEFAULT_DRIVABILITY} clicked")
+        log.info(f"[GLASS][COMPLAINT][NEW] {mva} - Drivability '{drivability}' clicked")
+        _step_pause("after Drivability")
         time.sleep(1)
 
         # 3) Select Complaint Type: always click 'Glass Damage' first, then select specific damage type using enums
@@ -262,6 +272,7 @@ def create_new_complaint(driver, mva: str, complaint_type: str = "glass") -> dic
             log.warning(f"[GLASS][COMPLAINT][WARN] {mva} - Complaint type '{glass_damage_label}' not found")
             return {"status": "failed", "reason": "complaint_type", "mva": mva}
         log.info(f"[GLASS][COMPLAINT] {mva} - Complaint type '{glass_damage_label}' selected")
+        _step_pause("after Glass Damage type selected")
         time.sleep(2)
 
         # Step 2: Select specific glass damage type (using enum)
@@ -305,6 +316,7 @@ def create_new_complaint(driver, mva: str, complaint_type: str = "glass") -> dic
         damage_btn_xpath = f'//button[.//h1[text()="{damage_label}"]]'
         if click_element(driver, (By.XPATH, damage_btn_xpath), timeout=10, desc=f"Glass Damage Type: {damage_label}"):
             log.info(f"[GLASS][COMPLAINT] {mva} - Glass damage type '{damage_label}' selected")
+            _step_pause("after damage subtype selected")
             time.sleep(2)  # allow auto-advance to Additional Info screen
         else:
             log.warning(f"[GLASS][COMPLAINT][WARN] {mva} - Glass damage type '{damage_label}' not found")
@@ -325,12 +337,11 @@ def create_new_complaint(driver, mva: str, complaint_type: str = "glass") -> dic
         submit_btn_xpath = "//button[contains(., 'Submit Complaint') or contains(., 'Submit')]"
         if click_element(driver, (By.XPATH, submit_btn_xpath), timeout=20, desc="Submit Complaint"):
             log.info(f"[GLASS][COMPLAINT] {mva} - Additional Info submitted")
+            _step_pause("after Submit Complaint")
             time.sleep(2)
         else:
             log.warning(f"[GLASS][COMPLAINT][WARN] {mva} - could not submit Additional Info")
             try:
-                log.error(driver.page_source)
-                # Ensure artifacts directory exists
                 artifacts_dir = os.path.join(ProjectPaths.get_project_root(), "artifacts")
                 os.makedirs(artifacts_dir, exist_ok=True)
                 screenshot_path = os.path.join(artifacts_dir, f"submit_complaint_error_{mva}.png")
@@ -340,40 +351,8 @@ def create_new_complaint(driver, mva: str, complaint_type: str = "glass") -> dic
                 log.error(f"Failed to save screenshot: {se}")
             return {"status": "failed", "reason": "submit_info", "mva": mva}
 
-        # 5) After Submit, Compass returns to the complaint list showing the new complaint.
-        #    Select the glass tile and click Next to advance to mileage.
-        time.sleep(2)
-        tiles = driver.find_elements(
-            By.XPATH, "//div[contains(@class,'fleet-operations-pwa__complaintItem__')]"
-        )
-        glass_tile = next(
-            (t for t in tiles if any(kw in t.text.lower() for kw in ["glass", "windshield", "crack", "chip", "window"])),
-            None
-        )
-        if glass_tile:
-            try:
-                glass_tile.click()
-                log.info(f"[GLASS][COMPLAINT][NEW] {mva} - glass complaint tile selected after Submit")
-            except Exception as e:
-                log.warning(f"[GLASS][COMPLAINT][NEW][WARN] {mva} - could not click glass tile after Submit: {e}")
-        else:
-            log.warning(f"[GLASS][COMPLAINT][NEW][WARN] {mva} - glass tile not found after Submit, attempting Next anyway")
-
-        if not click_next_in_dialog(driver, timeout=10):
-            log.warning(f"[GLASS][COMPLAINT][WARN] {mva} - Next not found after complaint selection")
-            try:
-                import os
-                from utils.project_paths import ProjectPaths
-                artifacts_dir = os.path.join(ProjectPaths.get_project_root(), "artifacts")
-                os.makedirs(artifacts_dir, exist_ok=True)
-                screenshot_path = os.path.join(artifacts_dir, f"complaint_next_error_{mva}.png")
-                driver.save_screenshot(screenshot_path)
-                log.info(f"[GLASS][COMPLAINT][NEW] Screenshot saved: {screenshot_path}")
-            except Exception:
-                pass
-            return {"status": "failed", "reason": "complaint_next", "mva": mva}
-        log.info(f"[GLASS][COMPLAINT][NEW] {mva} - Next clicked, advancing to mileage")
-
+        # After Submit, Compass transitions to the mileage dialog.
+        # The caller (work_item_handler) is responsible for clicking Next on the mileage dialog.
         return {"status": "created"}
 
     except Exception as e:

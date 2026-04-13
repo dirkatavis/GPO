@@ -132,13 +132,15 @@ class TestWIH3_MapDamageTypeToUi:
         result = self.handler.map_damage_type_to_ui("REPLACEMENT", "REAR")
         assert result == GlassDamageType.SIDE_REAR_WINDOW_DAMAGE.value
 
-    def test_replacement_none_location_returns_unknown(self):
+    def test_replacement_none_location_returns_windshield_crack(self):
+        """Unknown/blank location defaults to Windshield Crack for Replacement."""
         result = self.handler.map_damage_type_to_ui("REPLACEMENT", None)
-        assert result == GlassDamageType.UNKNOWN.value
+        assert result == GlassDamageType.WINDSHIELD_CRACK.value
 
-    def test_none_damage_type_none_location_returns_unknown(self):
+    def test_none_damage_type_none_location_returns_windshield_crack(self):
+        """Unknown damage type and location defaults to Windshield Crack."""
         result = self.handler.map_damage_type_to_ui(None, None)
-        assert result == GlassDamageType.UNKNOWN.value
+        assert result == GlassDamageType.WINDSHIELD_CRACK.value
 
 
 # ─── WIH-4: WorkItemConfig normalisation ─────────────────────────────────────
