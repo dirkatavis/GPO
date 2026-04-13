@@ -1,0 +1,3 @@
+MVA,DamageType,Location
+# Add MVA rows below. DamageType: REPLACEMENT or REPAIR. Location: WINDSHIELD, FRONT, SIDE, REAR
+56532416,REPLACEMENT,WINDSHIELD

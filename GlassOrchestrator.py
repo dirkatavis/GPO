@@ -969,10 +969,12 @@ def run_pipeline() -> None:
 
     # Step 7: Notify
     try:
-        notify_order_items(df_new_rows)
+        from core.eligibility import is_notification_eligible
+        eligible_rows = df_new_rows[df_new_rows.apply(lambda r: is_notification_eligible(r.to_dict()), axis=1)]
+        notify_order_items(eligible_rows)
     except Exception as exc:
         log.error("Notification failed — %s", exc, exc_info=True)
-        # Notification failure should not lose data; log and continue
+        # Notification failure is non-fatal for data persistence; pipeline ends here
         return
 
     log.info("=" * 60)
