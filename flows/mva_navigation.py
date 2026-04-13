@@ -49,7 +49,7 @@ def warmup_compass(driver, timeout: int = 30) -> bool:
     Returns True if warm-up succeeded, False if the input field was not found.
     The dummy MVA value is read from config key 'warmup_mva' (default 50227203).
     """
-    dummy_mva = get_config("warmup_mva", "50227203")
+    dummy_mva = str(get_config("warmup_mva", "50227203"))
     log.info(f"[NAV] Warming up Compass with dummy MVA {dummy_mva}...")
 
     input_field = _wait_for_input(driver, timeout=timeout)
@@ -60,10 +60,20 @@ def warmup_compass(driver, timeout: int = 30) -> bool:
     input_field.clear()
     input_field.send_keys(dummy_mva)
 
-    # Wait for vehicle detail panel to confirm app is fully initialized
+    # Wait for page structure to load before checking vehicle detail panel
+    try:
+        WebDriverWait(driver, timeout).until(
+            EC.presence_of_element_located(
+                (By.XPATH, "//button[normalize-space()='Add Work Item']")
+            )
+        )
+    except Exception:
+        log.warning("[NAV] Warm-up — page structure did not appear within timeout, proceeding anyway")
+
+    # Confirm vehicle detail panel loaded — proves app is fully initialized
     props_page = VehiclePropertiesPage(driver)
     last8 = dummy_mva[-8:] if len(dummy_mva) >= 8 else dummy_mva
-    echo = props_page.find_mva_echo(last8, timeout=15)
+    echo = props_page.find_mva_echo(last8, timeout=10)
     if echo:
         log.info("[NAV] Compass app ready — vehicle detail panel confirmed")
     else:
