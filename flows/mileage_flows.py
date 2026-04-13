@@ -9,7 +9,7 @@ def complete_mileage_dialog(driver, mva: str) -> dict:
     log.debug(f"[MILEAGE] {mva} - Completing mileage dialog.")
     try:
         if click_element(driver, (By.XPATH, "//button[normalize-space()='Next']")):
-            log.info(f"[MILEAGE] {mva} - Next clicked on mileage dialog")
+            log.info(f"[FLOW] {mva} - Click Next on mileage — PASSED")
             return {"status": "ok"}
         else:
             log.info(f"[MILEAGE][FAIL] {mva} - Next button not found")

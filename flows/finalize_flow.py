@@ -24,7 +24,7 @@ def finalize_workitem(driver, mva: str) -> dict:
             log.warning(f"[WORKITEM][WARN] {mva} - 'Create Work Item' button not found")
             return {"status": "failed", "reason": "create_btn", "mva": mva}
 
-        log.info(f"[WORKITEM] {mva} - 'Create Work Item' clicked")
+        log.info(f"[FLOW] {mva} - Click Create Work Item button — PASSED")
         time.sleep(2)  # allow UI to update
 
         # Step 2: Verify Work Item exists
@@ -41,7 +41,7 @@ def finalize_workitem(driver, mva: str) -> dict:
             log.warning(f"[WORKITEM][WARN] {mva} - 'Done' button not found after work item creation")
             return {"status": "failed", "reason": "done_btn", "mva": mva}
 
-        log.info(f"[WORKITEM] {mva} - Work Item finalized — Done clicked")
+        log.info(f"[FLOW] {mva} - Click Done button — PASSED")
         return {"status": "created", "mva": mva}
 
     except Exception as e:

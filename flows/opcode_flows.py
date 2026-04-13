@@ -68,7 +68,7 @@ def select_opcode(driver, mva: str, code_text: str = None) -> dict:
     driver.execute_script("arguments[0].scrollIntoView({block:'center'});", tile)
     time.sleep(1)
     tile.click()
-    log.info(f"[COMPLAINT] {mva} - Opcode '{code_text}' selected")
+    log.info(f"[FLOW] {mva} - Select {code_text} — PASSED")
     return {"status": "ok"}
 
 

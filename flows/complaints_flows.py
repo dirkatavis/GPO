@@ -254,14 +254,14 @@ def create_new_complaint(driver, mva: str, complaint_type: str = "glass", drivab
         ):
             log.warning(f"[GLASS][COMPLAINT][NEW][WARN] {mva} - could not click Add/Create New Complaint")
             return {"status": "failed", "reason": "add_btn"}
-        log.info(f"[GLASS][COMPLAINT][NEW] {mva} - Add/Create New Complaint clicked")
+        log.info(f"[FLOW] {mva} - Click Add New Complaint — PASSED")
         _step_pause("after Add New Complaint")
 
         # 2. Handle Drivability — glass damage is not drivable ("No")
         if not click_element(driver, (By.XPATH, f"//button[normalize-space()='{drivability}']"), timeout=10, desc=f"Drivability {drivability}"):
             log.warning(f"[GLASS][COMPLAINT][NEW][WARN] {mva} - could not click '{drivability}' in Drivability step")
             return {"status": "failed", "reason": "drivability"}
-        log.info(f"[GLASS][COMPLAINT][NEW] {mva} - Drivability '{drivability}' clicked")
+        log.info(f"[FLOW] {mva} - Click {drivability} Not drivable — PASSED")
         _step_pause("after Drivability")
         time.sleep(1)
 
@@ -271,7 +271,7 @@ def create_new_complaint(driver, mva: str, complaint_type: str = "glass", drivab
         if not click_element(driver, (By.XPATH, f"//button[normalize-space()='{glass_damage_label}']"), timeout=10, desc="Glass Damage complaint type"):
             log.warning(f"[GLASS][COMPLAINT][WARN] {mva} - Complaint type '{glass_damage_label}' not found")
             return {"status": "failed", "reason": "complaint_type", "mva": mva}
-        log.info(f"[GLASS][COMPLAINT] {mva} - Complaint type '{glass_damage_label}' selected")
+        log.info(f"[FLOW] {mva} - Click Glass Damage tile — PASSED")
         _step_pause("after Glass Damage type selected")
         time.sleep(2)
 
@@ -315,7 +315,7 @@ def create_new_complaint(driver, mva: str, complaint_type: str = "glass", drivab
         # Use double quotes for XPath to handle apostrophes in text like "I don't know"
         damage_btn_xpath = f'//button[.//h1[text()="{damage_label}"]]'
         if click_element(driver, (By.XPATH, damage_btn_xpath), timeout=10, desc=f"Glass Damage Type: {damage_label}"):
-            log.info(f"[GLASS][COMPLAINT] {mva} - Glass damage type '{damage_label}' selected")
+            log.info(f"[FLOW] {mva} - Click {damage_label} — PASSED")
             _step_pause("after damage subtype selected")
             time.sleep(2)  # allow auto-advance to Additional Info screen
         else:
@@ -336,7 +336,7 @@ def create_new_complaint(driver, mva: str, complaint_type: str = "glass", drivab
         # 4) Additional Info screen -> Submit (robust)
         submit_btn_xpath = "//button[contains(., 'Submit Complaint') or contains(., 'Submit')]"
         if click_element(driver, (By.XPATH, submit_btn_xpath), timeout=20, desc="Submit Complaint"):
-            log.info(f"[GLASS][COMPLAINT] {mva} - Additional Info submitted")
+            log.info(f"[FLOW] {mva} - Click Submit Complaint — PASSED")
             _step_pause("after Submit Complaint")
             time.sleep(2)
         else:

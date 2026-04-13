@@ -96,7 +96,7 @@ class WorkItemHandler(ABC):
                                desc="Add Work Item button"):
                 log.warning(f"[WORKITEM][WARN] {config.mva} - add_btn not found")
                 return False
-            log.info(f"[WORKITEM] {config.mva} - Add Work Item clicked")
+            log.info(f"[FLOW] {config.mva} - Click Add Work Item — PASSED")
             time.sleep(5)
             return True
         except Exception as e:
