@@ -194,17 +194,11 @@ class GlassWorkItemHandler(WorkItemHandler):
         if result.get("status") != "created":
             return result
         log.info(f"[GLASS] {config.mva} - New glass complaint created, continuing workflow")
-        # Step 7: Mileage -> Next
-        from flows.mileage_flows import complete_mileage_dialog
+        # New complaint path: Submit goes directly to opcode — no mileage step.
+        # Mileage only appears when associating an existing complaint.
         from config.config_loader import get_config
         import time as _time
         step_delay = float(get_config("step_delay", 0))
-        if step_delay > 0:
-            log.info(f"[STEP] before mileage — waiting {step_delay}s")
-            _time.sleep(step_delay)
-        res = complete_mileage_dialog(self.driver, config.mva)
-        if res.get("status") != "ok":
-            return {"status": "failed", "reason": "mileage", "mva": config.mva}
         # Step 8: OpCode -> Glass Repair/Replace (with fallback)
         from flows.opcode_flows import select_opcode
         if step_delay > 0:
