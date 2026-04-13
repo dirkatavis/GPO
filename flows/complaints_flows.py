@@ -337,17 +337,27 @@ def create_new_complaint(driver, mva: str, complaint_type: str = "glass", drivab
             save_failure_screenshot(driver, mva, "submit_complaint")
             return {"status": "failed", "reason": "submit_info", "mva": mva}
 
-        # After Submit, Compass returns to the complaint list screen.
-        # Click 'Add New Complaint' to proceed to the work item creation steps.
-        _step_pause("after Submit Complaint — before Add New Complaint")
-        if not (
-            click_element(driver, (By.XPATH, "//button[normalize-space()='Add New Complaint']"), timeout=10)
-            or click_element(driver, (By.XPATH, "//button[normalize-space()='Create New Complaint']"), timeout=5)
-        ):
-            log.warning(f"[GLASS][COMPLAINT][NEW][WARN] {mva} - Add New Complaint not found after Submit")
-            save_failure_screenshot(driver, mva, "post_submit_add_new_complaint")
-            return {"status": "failed", "reason": "post_submit_add_btn"}
-        log.info(f"[FLOW] {mva} - Click Add New Complaint (post-submit) — PASSED")
+        # After Submit, Compass returns to the "Create Work Item" complaint list screen.
+        # The new complaint appears in the "Open Complaint(s)" list and Next becomes enabled.
+        # Wait for a complaint tile to appear (confirming the complaint registered),
+        # then click Next to advance to opcode selection.
+        _step_pause("after Submit — waiting for complaint tile")
+        try:
+            WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located(
+                    (By.XPATH, "//div[contains(@class,'fleet-operations-pwa__complaintItem__')]")
+                )
+            )
+            log.info(f"[GLASS][COMPLAINT][NEW] {mva} - complaint tile appeared in list")
+        except Exception:
+            log.warning(f"[GLASS][COMPLAINT][NEW][WARN] {mva} - complaint tile did not appear, attempting Next anyway")
+
+        _step_pause("before Next after complaint created")
+        if not click_next_in_dialog(driver, timeout=10):
+            log.warning(f"[GLASS][COMPLAINT][NEW][WARN] {mva} - Next not clickable after complaint created")
+            save_failure_screenshot(driver, mva, "post_submit_next")
+            return {"status": "failed", "reason": "post_submit_next"}
+        log.info(f"[FLOW] {mva} - Click Next (complaint confirmed) — PASSED")
 
         return {"status": "created"}
 
