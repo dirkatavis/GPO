@@ -12,6 +12,7 @@
 
 from utils.logger import log
 from core.eligibility import is_notification_eligible
+from flows.mva_navigation import warmup_compass, navigate_to_mva
 from flows.work_item_flow import check_existing_work_item
 from flows.work_item_handler import WorkItemConfig, create_work_item_handler
 
@@ -107,11 +108,19 @@ def run_glass_work_item_phase(driver, manifest: list[dict], sheet_client=None,
     summary = {"processed": 0, "created": 0, "skipped": 0, "failed": 0}
     handler = create_work_item_handler("GLASS", driver)
 
+    # Prime the Compass app before processing any real MVAs
+    warmup_compass(driver)
+
     for entry in manifest:
         mva = entry["mva"]
         summary["processed"] += 1
         try:
             log.info(f"[PHASE7] {mva} - Starting work item review")
+
+            if not navigate_to_mva(driver, mva):
+                log.error(f"[PHASE7] {mva} - Navigation failed, skipping")
+                summary["failed"] += 1
+                continue
 
             if check_existing_work_item(driver, mva, work_item_type="GLASS"):
                 log.info(f"[PHASE7] {mva} - Open glass work item already exists, skipping")
