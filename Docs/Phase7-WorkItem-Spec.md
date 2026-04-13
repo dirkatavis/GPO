@@ -71,6 +71,57 @@ Only Phase E's PR targets main — that is the full feature merge.
 
 ---
 
+### Phase B — COMPLETE ✓ (2026-04-12)
+
+**Branch:** `feature/phase7-b-core` | **PR:** #13
+
+**Test counts:** 143 passed, 2 skipped (unit + integration, E2E excluded)
+
+**Deliverables completed:**
+- `flows/work_item_flow.py` — `check_existing_work_item(driver, mva, work_item_type="GLASS")` added; uses existing `get_work_items()` (open items only); explicit type dispatch for future extensibility; returns `False` on any exception
+- `flows/glass_work_item_phase.py` — new module; `read_glass_claims()` reads GlassClaims sheet, filters by `is_notification_eligible()` and blank `WorkItemCreated`; `run_glass_work_item_phase()` loops all MVAs, never aborts, returns `{processed, created, skipped, failed}`; `GlassClaimsUpdater` class caches headers + MVA→row map and writes `WorkItemCreated=Y` on success
+- `GlassWorkItems.py` — standalone operator entry point; login → sheet connect → manifest → phase run → summary log; driver in `try/finally`
+- `Run-GlassWorkItems.cmd` — bootstraps venv, syncs requirements (SHA256 stamp), launches `GlassWorkItems.py`; matches `Run-GlassOrchestrator.cmd` pattern
+- `tests/test_glass_work_item_phase.py` — new (22 tests)
+- `tests/test_integration.py` — IT-6 integration tests added (132 lines)
+
+**Implementation decisions:**
+- `GlassClaimsUpdater` caches the `WorkItemCreated` column index and MVA→row map on first use to avoid O(n²) sheet reads on large manifests
+- `Location` column in sheet defaults to `"WINDSHIELD"` when blank — matches confirmed design decision that all current Replacement items are windshield
+- Complete new complaint workflow wired end-to-end: mileage dialog → OpCode selection → finalize work item
+
+---
+
+### Phase C — COMPLETE ✓ (2026-04-12)
+
+**Branch:** `feature/phase7-c-entry-point` | **PR:** #14
+
+**Test counts:** 143 passed, 2 skipped
+
+**Deliverables completed:**
+- `tests/test_integration.py` — IT-6 integration suite for `run_glass_work_item_phase()`: full orchestration path, two-MVA mixed manifest, exception isolation, `WorkItemCreated` sheet update verified
+
+**Implementation decisions:**
+- Unused `WorkItemConfig` import removed from IT-6 test after review
+
+---
+
+### Phase D — COMPLETE ✓ (2026-04-13)
+
+**Branch:** `feature/phase7-d-e2e` | **PR:** pending
+
+**Test counts:** 143 unit/integration passed, 2 skipped; 7 E2E scenarios written; real-world validation passed against live Compass on 2026-04-13
+
+**Deliverables completed:**
+- `tests/test_e2e_glass_work_item.py` — 7 E2E scenarios tagged `@pytest.mark.e2e`: skip existing work item, create windshield (new complaint), create with existing complaint association, side glass, rear glass, mixed 3-MVA manifest, idempotency (second run skips)
+- `pytest.ini` — `e2e` marker registered; opt-in via `GLASS_RUN_E2E_TESTS=1`; per-scenario MVA env vars documented in file header
+
+**Implementation decisions:**
+- E2E opt-in guard (`GLASS_RUN_E2E_TESTS=1`) prevents accidental live-Compass runs in CI
+- Real-world validation against today's production glass damage confirmed correct behavior in lieu of full scripted E2E scenario run
+
+---
+
 ## Step 0 — Determine Current Phase and Branch
 
 Before reading any files or writing any code, run:
