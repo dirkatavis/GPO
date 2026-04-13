@@ -122,6 +122,53 @@ Only Phase E's PR targets main — that is the full feature merge.
 
 ---
 
+### Phase E — COMPLETE ✓ (2026-04-13)
+
+**Branch:** `feature/phase7-e-docs` | **PR:** #16
+
+**Test counts:** 143 unit/integration passed, 9 skipped
+
+**Deliverables completed:**
+- `smoke_test_workitem.py` — cold start fix; guarded `input()` with `isatty()` + `EOFError` catch
+- `flows/opcode_flows.py` — XPath switched to `contains(normalize-space(), ...)` (icon glyphs prefix tile text); `WebDriverWait` for `opCodeText` elements before search; `_xpath_literal()` helper for safe XPath string escaping; diagnostic logging of all found texts when target not found
+- `flows/finalize_flow.py` — replaced `complete_pm_workitem` with "Done" button click; glass work items stay Open; returns `{"status": "created"}`
+- `Docs/Phase7-WorkItem-Spec.md` — scenario coverage matrix, Phase E completion log, S4/S5 gap flags
+
+**Implementation decisions:**
+- `contains(normalize-space(), ...)` used instead of exact match — Compass opcode text nodes are prefixed by icon glyph characters that break exact `normalize-space()=` XPath
+- Glass work items finalized with "Done" button only, not marked complete — matches confirmed operator workflow
+
+---
+
+### Bugfix: Navigation Extraction — COMPLETE ✓ (2026-04-13)
+
+**Branch:** `bugfix/extract-navigation` | **PR:** #17
+
+**Test counts:** 144 passed, 9 skipped
+
+**Deliverables completed:**
+- `flows/mva_navigation.py` — new shared module; `warmup_compass(driver, timeout=30)` enters dummy MVA from `warmup_mva` config key, validates vehicle detail panel; `navigate_to_mva(driver, mva, timeout=30)` clears input, enters real MVA, validates via `VehiclePropertiesPage.find_mva_echo()`; both return `bool`, wrap all exceptions
+- `flows/glass_work_item_phase.py` — `run_glass_work_item_phase()` calls `warmup_compass()` before loop and `navigate_to_mva()` per MVA; aborts on warm-up failure; increments `failed` on nav failure
+- `smoke_test_workitem.py` — local nav functions removed; now imports and calls `warmup_compass()` / `navigate_to_mva()` from `flows.mva_navigation`
+- `tests/test_glass_work_item_phase.py` — new test `test_navigation_failure_increments_failed_skips_check_and_create`; all GLAS-3 tests patch `warmup_compass` and `navigate_to_mva`
+
+**Implementation decisions:**
+- Navigation extracted to shared module after discovering smoke test had its own navigation logic not present in production — "tests should not have features"
+- `warmup_compass()` enters a dummy MVA (default `"50227203"`) before real MVAs to prime the Compass app past its cold-start initialization window
+
+---
+
+### Bugfix: IT6 Navigation Patches — COMPLETE ✓ (2026-04-13)
+
+**Branch:** `bugfix/fix-it6-navigation-patches` | **PR:** #18
+
+**Test counts:** 144 passed, 9 skipped
+
+**Deliverables completed:**
+- `tests/test_integration.py` — 4 IT-6 tests updated to patch `warmup_compass` and `navigate_to_mva` after navigation was wired into `run_glass_work_item_phase()` in PR #17
+
+---
+
 ## Scenario Coverage Matrix
 
 All meaningful combinations of vehicle state that Phase 7 must handle correctly.
