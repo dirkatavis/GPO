@@ -715,8 +715,10 @@ def persist_new_rows(df: pd.DataFrame) -> pd.DataFrame:
     # Build rows as lists matching the 8-column contract
     rows_to_insert = _rows_from_dataframe(new_rows)
 
-    # Insert rows above the summary section (pushes summary down automatically)
-    ws.insert_rows(rows_to_insert, row=insert_row)
+    # Insert rows above the summary section (pushes summary down automatically).
+    # inherit_from_before=True: new rows inherit formatting from the data row above,
+    # not the summary row below (which is orange/bold and would corrupt the inserted rows).
+    ws.insert_rows(rows_to_insert, row=insert_row, inherit_from_before=True)
 
     log.info("Persistence: Wrote %d new rows to Google Sheet at row %d", len(new_rows), insert_row)
     return new_rows
