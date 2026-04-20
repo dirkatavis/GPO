@@ -64,34 +64,35 @@ class TestUT1_SuffixRegex:
     def test_phase2_mapping_plain(self):
         """End-to-end: plain MVA → Replacement + Missing"""
         manifest, mva_list = parse_descriptions_to_manifest(
-            ["59340120"], datetime(2026, 3, 5)
+            [("batch1", "59340120")], datetime(2026, 3, 5)
         )
         assert "59340120" in manifest
         assert manifest["59340120"]["Damage Type"] == "Replacement"
         assert manifest["59340120"]["Claim#"] == "Missing"
+        assert manifest["59340120"]["Batch ID"] == "batch1"
         assert mva_list == ["59340120"]
 
     def test_phase2_mapping_repair(self):
         """59340120r → Repair + Missing"""
-        manifest, _ = parse_descriptions_to_manifest(["59340120r"], datetime(2026, 3, 5))
+        manifest, _ = parse_descriptions_to_manifest([("batch1", "59340120r")], datetime(2026, 3, 5))
         assert manifest["59340120"]["Damage Type"] == "Repair"
         assert manifest["59340120"]["Claim#"] == "Missing"
 
     def test_phase2_mapping_claim(self):
         """59340120c → Replacement + Listed"""
-        manifest, _ = parse_descriptions_to_manifest(["59340120c"], datetime(2026, 3, 5))
+        manifest, _ = parse_descriptions_to_manifest([("batch1", "59340120c")], datetime(2026, 3, 5))
         assert manifest["59340120"]["Damage Type"] == "Replacement"
         assert manifest["59340120"]["Claim#"] == "Listed"
 
     def test_phase2_mapping_both(self):
         """59340120rc → Repair + Listed"""
-        manifest, _ = parse_descriptions_to_manifest(["59340120rc"], datetime(2026, 3, 5))
+        manifest, _ = parse_descriptions_to_manifest([("batch1", "59340120rc")], datetime(2026, 3, 5))
         assert manifest["59340120"]["Damage Type"] == "Repair"
         assert manifest["59340120"]["Claim#"] == "Listed"
 
     def test_phase2_all_four_variations(self):
         """Process all four variations in one batch."""
-        descriptions = ["59340120", "59340121r", "59340122c", "59340123rc"]
+        descriptions = [("batch1", "59340120"), ("batch1", "59340121r"), ("batch1", "59340122c"), ("batch1", "59340123rc")]
         manifest, mva_list = parse_descriptions_to_manifest(descriptions, datetime(2026, 3, 5))
         assert len(manifest) == 4
         assert len(mva_list) == 4
@@ -115,10 +116,10 @@ class TestUT2_HTMLExtraction:
     MOCK_HTML = """
     <html><body>
     <table>
-      <tr><th>Date</th><th>MVA</th><th>Description</th><th>Other</th></tr>
-      <tr><td>2026-03-05</td><td>001</td><td>59340120</td><td>X</td></tr>
-      <tr><td>2026-03-05</td><td>002</td><td>59340121r</td><td>Y</td></tr>
-      <tr><td>2026-03-05</td><td>003</td><td>59340122rc</td><td>Z</td></tr>
+      <tr><th>Type</th><th>Date</th><th>MVA</th><th>Description</th><th>Other</th></tr>
+      <tr><td>batch1</td><td>2026-03-05</td><td>001</td><td>59340120</td><td>X</td></tr>
+      <tr><td>batch1</td><td>2026-03-05</td><td>002</td><td>59340121r</td><td>Y</td></tr>
+      <tr><td>batch1</td><td>2026-03-05</td><td>003</td><td>59340122rc</td><td>Z</td></tr>
     </table>
     </body></html>
     """
@@ -148,11 +149,11 @@ class TestUT2_HTMLExtraction:
 
     def test_extracts_description_column(self):
         result = _parse_html_descriptions(self.MOCK_HTML)
-        assert result == ["59340120", "59340121r", "59340122rc"]
+        assert result == [("batch1", "59340120"), ("batch1", "59340121r"), ("batch1", "59340122rc")]
 
     def test_orca_multiline_cell_splits_into_individual_mvas(self):
         result = _parse_html_descriptions(self.ORCA_HTML)
-        assert result == ["59340120c", "58157002", "58135663cr", "57193500r"]
+        assert result == [("0205", "59340120c"), ("0205", "58157002"), ("0205", "58135663cr"), ("0205", "57193500r")]
 
     def test_returns_empty_on_no_table(self):
         result = _parse_html_descriptions("<html><body><p>No table</p></body></html>")
@@ -171,14 +172,14 @@ class TestUT2_HTMLExtraction:
     def test_skips_empty_description_cells(self):
         html = """
         <table>
-          <tr><th>Description</th></tr>
-          <tr><td>59340120</td></tr>
-          <tr><td></td></tr>
-          <tr><td>59340121r</td></tr>
+          <tr><th>Type</th><th>Description</th></tr>
+          <tr><td>batch1</td><td>59340120</td></tr>
+          <tr><td>batch1</td><td></td></tr>
+          <tr><td>batch1</td><td>59340121r</td></tr>
         </table>
         """
         result = _parse_html_descriptions(html)
-        assert result == ["59340120", "59340121r"]
+        assert result == [("batch1", "59340120"), ("batch1", "59340121r")]
 
     def test_extract_body_prefers_html_with_table(self):
         """_extract_body should return HTML when it contains a <table>."""
@@ -195,25 +196,29 @@ class TestUT2_HTMLExtraction:
 
 
 class TestUT3_Idempotency:
-    """Verify the duplicate-detection logic using MVA+Date composite keys."""
+    """Verify the duplicate-detection logic using MVA+Date+BatchID composite keys."""
 
     MOCK_EXISTING = {
-        "59340120|03/05/2026",
-        "59340121|03/05/2026",
-        "59340122|03/04/2026",
+        "59340120|03/05/2026|batch1",
+        "59340121|03/05/2026|batch1",
+        "59340122|03/04/2026|batch2",
     }
 
     def test_duplicate_returns_true(self):
-        assert is_duplicate("59340120", "03/05/2026", self.MOCK_EXISTING) is True
+        assert is_duplicate("59340120", "03/05/2026", "batch1", self.MOCK_EXISTING) is True
 
     def test_new_mva_returns_false(self):
-        assert is_duplicate("99999999", "03/05/2026", self.MOCK_EXISTING) is False
+        assert is_duplicate("99999999", "03/05/2026", "batch1", self.MOCK_EXISTING) is False
 
     def test_same_mva_different_date_returns_false(self):
-        assert is_duplicate("59340120", "03/06/2026", self.MOCK_EXISTING) is False
+        assert is_duplicate("59340120", "03/06/2026", "batch1", self.MOCK_EXISTING) is False
+
+    def test_same_mva_same_date_different_batch_returns_false(self):
+        """Same MVA+Date but different Batch ID should NOT be a duplicate."""
+        assert is_duplicate("59340120", "03/05/2026", "batch2", self.MOCK_EXISTING) is False
 
     def test_empty_existing_returns_false(self):
-        assert is_duplicate("59340120", "03/05/2026", set()) is False
+        assert is_duplicate("59340120", "03/05/2026", "batch1", set()) is False
 
 
 # ─── UT-4: Sanitization ──────────────────────────────────────────────────────
@@ -223,39 +228,39 @@ class TestUT4_Sanitization:
     """Ensure malformed entries are rejected and never reach the MVA list."""
 
     def test_too_short(self):
-        manifest, mva_list = parse_descriptions_to_manifest(["12345"], datetime(2026, 3, 5))
+        manifest, mva_list = parse_descriptions_to_manifest([("batch1", "12345")], datetime(2026, 3, 5))
         assert manifest == {}
         assert mva_list == []
 
     def test_no_digits(self):
-        manifest, mva_list = parse_descriptions_to_manifest(["abcdefgh"], datetime(2026, 3, 5))
+        manifest, mva_list = parse_descriptions_to_manifest([("batch1", "abcdefgh")], datetime(2026, 3, 5))
         assert manifest == {}
         assert mva_list == []
 
     def test_too_long(self):
-        manifest, mva_list = parse_descriptions_to_manifest(["123456789"], datetime(2026, 3, 5))
+        manifest, mva_list = parse_descriptions_to_manifest([("batch1", "123456789")], datetime(2026, 3, 5))
         assert manifest == {}
         assert mva_list == []
 
     def test_mixed_valid_and_invalid(self):
-        descriptions = ["59340120", "12345", "abcdefgh", "59340121r"]
+        descriptions = [("batch1", "59340120"), ("batch1", "12345"), ("batch1", "abcdefgh"), ("batch1", "59340121r")]
         manifest, mva_list = parse_descriptions_to_manifest(descriptions, datetime(2026, 3, 5))
         assert len(manifest) == 2
         assert set(mva_list) == {"59340120", "59340121"}
 
     def test_special_characters(self):
-        manifest, mva_list = parse_descriptions_to_manifest(["5934012!"], datetime(2026, 3, 5))
+        manifest, mva_list = parse_descriptions_to_manifest([("batch1", "5934012!")], datetime(2026, 3, 5))
         assert manifest == {}
         assert mva_list == []
 
     def test_whitespace_only(self):
-        manifest, mva_list = parse_descriptions_to_manifest(["   "], datetime(2026, 3, 5))
+        manifest, mva_list = parse_descriptions_to_manifest([("batch1", "   ")], datetime(2026, 3, 5))
         assert manifest == {}
         assert mva_list == []
 
     def test_invalid_suffix(self):
         """'x' is not a valid suffix — should be rejected."""
-        manifest, mva_list = parse_descriptions_to_manifest(["59340120x"], datetime(2026, 3, 5))
+        manifest, mva_list = parse_descriptions_to_manifest([("batch1", "59340120x")], datetime(2026, 3, 5))
         assert manifest == {}
         assert mva_list == []
 

@@ -10,7 +10,7 @@ A modular Python pipeline for vehicle glass procurement, built on a **6-phase ar
 | 2 | **Parsing** | Regex triage (`^(\d{8})([rc]*)$`), build session manifest |
 | 3 | **Worker** | Write MVAs to CSV, invoke `GlassDataParser.py` subprocess |
 | 4 | **Data Merge** | Left-join manifest with scraper results; missing VIN → `N/A` |
-| 5 | **Persistence** | Append to Google Sheet (`GlassClaims` tab), idempotent on MVA+Arrival Date` |
+| 5 | **Persistence** | Append to Google Sheet (`GlassClaims` tab), idempotent on MVA+Arrival Date+Batch ID |
 | 6 | **Notification** | HTML email for Replacement items; red-flagged rows for missing VINs |
 
 ## Suffix Rules
@@ -23,7 +23,7 @@ A modular Python pipeline for vehicle glass procurement, built on a **6-phase ar
 ## Data Contract — `ATL_Data 2026 : GlassClaims`
 
 The pipeline output maps 1-to-1 with the `GlassClaims` tab in the master workbook.
-Phase 5 inserts rows above the summary section; the idempotency key is **`MVA | Arrival Date`**.
+Phase 5 inserts rows above the summary section; the idempotency key is **`MVA | Arrival Date | Batch ID`**.
 
 | # | Column | Source | Phase | Notes |
 |---|--------|--------|-------|-------|
@@ -35,6 +35,7 @@ Phase 5 inserts rows above the summary section; the idempotency key is **`MVA | 
 | 6 | **Damage Type** | Suffix `r` → Repair | 2 | Default: `Replacement` |
 | 7 | **Claim#** | Suffix `c` → Listed | 2 | Default: `Missing` |
 | 8 | **WorkItem** | Runtime config | 2 | Defaults to `verified` |
+| 9 | **Batch ID** | Email Type column | 2 | Empty if Type column missing |
 
 ## Setup
 
