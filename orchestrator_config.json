@@ -40,7 +40,6 @@
     "Location",
     "Damage Type",
     "Claim#",
-    "WorkItem",
-    "Batch ID"
+    "WorkItem"
   ]
 }

@@ -124,7 +124,7 @@ class TestIT3_MergeReconciliation:
     def test_left_join_with_missing_mva(self, tmp_path, monkeypatch):
         """One MVA present in results, one missing → VIN=N/A for missing."""
         # Build manifest from parsing step
-        descriptions = [("batch1", "59340120"), ("batch1", "59340121")]
+        descriptions = [("0305APO", "59340120"), ("0305APO", "59340121")]
         manifest, _ = parse_descriptions_to_manifest(descriptions, datetime(2026, 3, 5))
 
         # Create a mock GlassResults.txt with only ONE of the two MVAs
@@ -145,7 +145,7 @@ class TestIT3_MergeReconciliation:
 
     def test_all_mvas_missing_from_results(self, tmp_path, monkeypatch):
         """No scraper results at all → all VINs become N/A."""
-        descriptions = [("batch1", "59340120"), ("batch1", "59340121")]
+        descriptions = [("0305APO", "59340120"), ("0305APO", "59340121")]
         manifest, _ = parse_descriptions_to_manifest(descriptions, datetime(2026, 3, 5))
 
         results_file = tmp_path / "GlassResults.txt"
@@ -160,7 +160,7 @@ class TestIT3_MergeReconciliation:
 
     def test_results_file_missing(self, tmp_path, monkeypatch):
         """No GlassResults.txt file → degrade gracefully, all VINs = N/A."""
-        descriptions = [("batch1", "59340120")]
+        descriptions = [("0305APO", "59340120")]
         manifest, _ = parse_descriptions_to_manifest(descriptions, datetime(2026, 3, 5))
 
         monkeypatch.setattr("GlassOrchestrator.RESULTS_PATH", tmp_path / "nonexistent.txt")
@@ -176,7 +176,7 @@ class TestIT3_MergeReconciliation:
 class TestIT4_SpreadsheetPersistence:
     """Verify data is appended to Google Sheet without overwriting."""
 
-    def _make_test_df(self, mvas, date="03/05/2026", batch_id="batch1"):
+    def _make_test_df(self, mvas, date="03/05/2026"):
         rows = []
         for mva in mvas:
             rows.append({
@@ -188,7 +188,6 @@ class TestIT4_SpreadsheetPersistence:
                 "Damage Type": "Replacement",
                 "Claim#": "Missing",
                 "WorkItem": "verified",
-                "Batch ID": batch_id,
             })
         return pd.DataFrame(rows, columns=COLUMNS)
 
@@ -196,7 +195,7 @@ class TestIT4_SpreadsheetPersistence:
         """Create a mock worksheet with optional existing data."""
         ws = MagicMock()
         header = ["Arrival Date", "MVA", "VIN", "Make", "Location",
-                  "Damage Type", "Claim#", "WorkItem", "Batch ID"]
+                  "Damage Type", "Claim#", "WorkItem"]
         if existing_rows is None:
             existing_rows = []
         ws.get_all_values.return_value = [header] + existing_rows
@@ -222,7 +221,7 @@ class TestIT4_SpreadsheetPersistence:
     def test_appends_without_overwriting(self, mock_get_ws):
         """Second write appends new rows; existing data untouched."""
         existing = [["03/05/2026", "59340120", "1HGCM82633A004352",
-                      "Windshield", "APO", "Replacement", "Missing", "verified", "batch1"]]
+                      "Windshield", "APO", "Replacement", "Missing", "verified"]]
         ws = self._mock_worksheet(existing)
         mock_get_ws.return_value = ws
 
@@ -236,9 +235,9 @@ class TestIT4_SpreadsheetPersistence:
 
     @patch("GlassOrchestrator._get_worksheet")
     def test_idempotency_prevents_duplicate(self, mock_get_ws):
-        """Same MVA+Date+BatchID already in sheet → no rows inserted."""
+        """Same MVA+Date already in sheet → no rows inserted."""
         existing = [["03/05/2026", "59340120", "1HGCM82633A004352",
-                      "Windshield", "APO", "Replacement", "Missing", "verified", "batch1"]]
+                      "Windshield", "APO", "Replacement", "Missing", "verified"]]
         ws = self._mock_worksheet(existing)
         mock_get_ws.return_value = ws
 
@@ -249,22 +248,8 @@ class TestIT4_SpreadsheetPersistence:
         ws.insert_rows.assert_not_called()
 
     @patch("GlassOrchestrator._get_worksheet")
-    def test_different_batch_id_allows_insert(self, mock_get_ws):
-        """Same MVA+Date but different Batch ID → row IS inserted."""
-        existing = [["03/05/2026", "59340120", "1HGCM82633A004352",
-                      "Windshield", "APO", "Replacement", "Missing", "verified", "batch1"]]
-        ws = self._mock_worksheet(existing)
-        mock_get_ws.return_value = ws
-
-        df = self._make_test_df(["59340120"], batch_id="batch2")
-        new_rows = persist_new_rows(df)
-
-        assert len(new_rows) == 1
-        ws.insert_rows.assert_called_once()
-
-    @patch("GlassOrchestrator._get_worksheet")
     def test_correct_columns_written(self, mock_get_ws):
-        """Verify all 9 columns match the expected schema."""
+        """Verify all 8 columns match the expected schema."""
         ws = self._mock_worksheet()
         mock_get_ws.return_value = ws
 
@@ -273,7 +258,7 @@ class TestIT4_SpreadsheetPersistence:
 
         written = ws.insert_rows.call_args[0][0]
         assert written[0] == ["03/05/2026", "59340120", "1HGCM82633A004352",
-                                "Windshield", "APO", "Replacement", "Missing", "verified", "batch1"]
+                                "Windshield", "APO", "Replacement", "Missing", "verified"]
 
 
 # ─── IT-5: Spreadsheet Configuration Health ──────────────────────────────────

@@ -77,7 +77,6 @@ def _load_runtime_config(config_path: Path) -> dict:
             "Damage Type",
             "Claim#",
             "WorkItem",
-            "Batch ID",
         ],
         "notify_recipients": [],
     }
@@ -520,6 +519,24 @@ def _get_type_index_from_cells(cells: list[str]) -> int | None:
     return cells.index("Type")
 
 
+def _extract_location_from_type(type_value: str) -> str:
+    """
+    Extract location suffix (APO or BB) from Type column value.
+    
+    Format: MMDD + location suffix (e.g., '0420APO' → 'APO', '0420BB' → 'BB')
+    Returns the configured LOCATION default if extraction fails.
+    """
+    if not type_value:
+        return LOCATION
+    # Extract suffix after 4-digit date prefix
+    type_value = type_value.strip()
+    if len(type_value) > 4:
+        suffix = type_value[4:].upper()
+        if suffix in ("APO", "BB"):
+            return suffix
+    return LOCATION
+
+
 def _split_non_empty_lines(raw_text: str) -> list[str]:
     """Split text by lines and return only non-empty trimmed lines."""
     return [line.strip() for line in raw_text.splitlines() if line.strip()]
@@ -545,8 +562,9 @@ def parse_descriptions_to_manifest(descriptions: list[tuple[str, str]], email_da
     manifest: dict[str, dict] = {}
     mva_list: list[str] = []
     date_str = email_date.strftime("%m/%d/%Y")
+    missing_type_count = 0
 
-    for batch_id, desc in descriptions:
+    for type_value, desc in descriptions:
         match = MVA_PATTERN.match(desc.strip())
         if not match:
             log.warning("Parsing: Malformed entry skipped — '%s'", desc)
@@ -560,22 +578,25 @@ def parse_descriptions_to_manifest(descriptions: list[tuple[str, str]], email_da
         # Claim status values must match allowed UI options.
         claim = "Listed" if "c" in suffixes else "Missing"
 
-        if not batch_id:
-            log.warning("Parsing: Missing Batch ID for MVA %s — using empty string", mva)
+        # Extract location from Type column (e.g., '0420APO' → 'APO')
+        location = _extract_location_from_type(type_value)
+        if not type_value:
+            missing_type_count += 1
 
         manifest[mva] = {
             "Arrival Date": date_str,
             "MVA": mva,
             "VIN": "",       # Populated during merge step
             "Make": "",      # Populated during merge from GlassResults Desc
-            "Location": LOCATION,
+            "Location": location,
             "Damage Type": damage_type,
             "Claim#": claim,
             "WorkItem": RUNTIME_CONFIG.get("work_item_default_flag", "verified"),
-            "Batch ID": batch_id,
         }
         mva_list.append(mva)
 
+    if missing_type_count > 0:
+        log.warning("Parsing: %d MVAs missing Type column — using default location '%s'", missing_type_count, LOCATION)
     log.info("Parsing: Manifest built — %d valid MVAs, %d malformed",
              len(manifest), len(descriptions) - len(manifest))
     return manifest, mva_list
@@ -754,7 +775,7 @@ def persist_new_rows(df: pd.DataFrame) -> pd.DataFrame:
     # Find the insertion point: first empty row after last data row (column B = MVA)
     insert_row = _find_insert_row(ws)
 
-    # Build rows as lists matching the 9-column contract
+    # Build rows as lists matching the 8-column contract
     rows_to_insert = _rows_from_dataframe(new_rows)
 
     # Insert rows above the summary section (pushes summary down automatically).
@@ -767,8 +788,8 @@ def persist_new_rows(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _filter_new_rows(df: pd.DataFrame, existing_keys: set[str]) -> pd.DataFrame:
-    """Return only rows not already present in the sheet (MVA|Arrival Date|Batch ID key)."""
-    df_with_keys = df.assign(_key=df["MVA"] + "|" + df["Arrival Date"] + "|" + df["Batch ID"].fillna(""))
+    """Return only rows not already present in the sheet (MVA|Arrival Date key)."""
+    df_with_keys = df.assign(_key=df["MVA"] + "|" + df["Arrival Date"])
     return df_with_keys[~df_with_keys["_key"].isin(existing_keys)].drop(columns=["_key"]).copy()
 
 
@@ -789,7 +810,7 @@ def _rows_from_dataframe(df: pd.DataFrame) -> list[list[str]]:
 
 def _load_existing_keys(ws) -> set[str]:
     """
-    Read existing MVA|Date|Batch ID composite keys from the Google Sheet worksheet
+    Read existing MVA|Date composite keys from the Google Sheet worksheet
     for idempotency checking.
     """
     existing_keys: set[str] = set()
@@ -800,13 +821,13 @@ def _load_existing_keys(ws) -> set[str]:
         headers = all_vals[0]
         mva_idx = headers.index("MVA") if "MVA" in headers else None
         date_idx = headers.index("Arrival Date") if "Arrival Date" in headers else None
-        batch_idx = headers.index("Batch ID") if "Batch ID" in headers else None
         if mva_idx is None or date_idx is None:
             return existing_keys
         for row in all_vals[1:]:
             if len(row) > max(mva_idx, date_idx) and row[mva_idx].strip():
-                batch_id = row[batch_idx] if batch_idx is not None and len(row) > batch_idx else ""
-                key = f"{row[mva_idx]}|{row[date_idx]}|{batch_id}"
+                mva = row[mva_idx].strip()
+                arrival_date = row[date_idx].strip()
+                key = f"{mva}|{arrival_date}"
                 existing_keys.add(key)
     except (AttributeError, KeyError, TypeError, ValueError, OSError) as exc:
         log.warning("Could not read existing sheet data — %s", exc)
@@ -814,9 +835,9 @@ def _load_existing_keys(ws) -> set[str]:
     return existing_keys
 
 
-def is_duplicate(mva: str, date: str, batch_id: str, existing_keys: set[str]) -> bool:
-    """Return True if the MVA+Date+Batch ID composite key already exists."""
-    return f"{mva}|{date}|{batch_id}" in existing_keys
+def is_duplicate(mva: str, date: str, existing_keys: set[str]) -> bool:
+    """Return True if the MVA+Date composite key already exists."""
+    return f"{mva}|{date}" in existing_keys
 
 
 # ─── Notification ─────────────────────────────────────────────────────────────
@@ -864,6 +885,8 @@ def _build_html_table(df: pd.DataFrame) -> str:
             vin_cell = f"<td>{row['VIN']}</td>"
 
         batch_id = row.get('Batch ID', '')
+        if pd.isna(batch_id):
+            batch_id = ''
         rows_html += f"""<tr{style}>
             <td>{row['Arrival Date']}</td>
             <td>{row['MVA']}</td>
@@ -873,7 +896,6 @@ def _build_html_table(df: pd.DataFrame) -> str:
             <td>{row['Damage Type']}</td>
             <td>{row['Claim#']}</td>
             <td>{row['WorkItem']}</td>
-            <td>{batch_id}</td>
         </tr>\n"""
 
     alert_banner = ""
@@ -906,7 +928,7 @@ def _build_html_table(df: pd.DataFrame) -> str:
                 <tr>
                     <th>Arrival Date</th><th>MVA</th><th>VIN</th>
                     <th>Make</th><th>Location</th>
-                    <th>Damage Type</th><th>Claim#</th><th>WorkItem</th><th>Batch ID</th>
+                    <th>Damage Type</th><th>Claim#</th><th>WorkItem</th>
                 </tr>
             </thead>
             <tbody>
