@@ -5,6 +5,7 @@ UT-1: Suffix Regex Accuracy
 UT-2: HTML Extraction
 UT-3: Idempotency Check
 UT-4: Sanitization
+UT-7: Location Extraction from Type Column
 """
 
 import re
@@ -19,6 +20,7 @@ from GlassOrchestrator import (
     _load_local_config_overrides,
     _load_runtime_config,
     _extract_body,
+    _extract_location_from_type,
     _parse_html_descriptions,
     notify_order_items,
     is_duplicate,
@@ -64,34 +66,35 @@ class TestUT1_SuffixRegex:
     def test_phase2_mapping_plain(self):
         """End-to-end: plain MVA → Replacement + Missing"""
         manifest, mva_list = parse_descriptions_to_manifest(
-            ["59340120"], datetime(2026, 3, 5)
+            [("0305APO", "59340120")], datetime(2026, 3, 5)
         )
         assert "59340120" in manifest
         assert manifest["59340120"]["Damage Type"] == "Replacement"
         assert manifest["59340120"]["Claim#"] == "Missing"
+        assert manifest["59340120"]["Location"] == "APO"
         assert mva_list == ["59340120"]
 
     def test_phase2_mapping_repair(self):
         """59340120r → Repair + Missing"""
-        manifest, _ = parse_descriptions_to_manifest(["59340120r"], datetime(2026, 3, 5))
+        manifest, _ = parse_descriptions_to_manifest([("0305APO", "59340120r")], datetime(2026, 3, 5))
         assert manifest["59340120"]["Damage Type"] == "Repair"
         assert manifest["59340120"]["Claim#"] == "Missing"
 
     def test_phase2_mapping_claim(self):
         """59340120c → Replacement + Listed"""
-        manifest, _ = parse_descriptions_to_manifest(["59340120c"], datetime(2026, 3, 5))
+        manifest, _ = parse_descriptions_to_manifest([("0305APO", "59340120c")], datetime(2026, 3, 5))
         assert manifest["59340120"]["Damage Type"] == "Replacement"
         assert manifest["59340120"]["Claim#"] == "Listed"
 
     def test_phase2_mapping_both(self):
         """59340120rc → Repair + Listed"""
-        manifest, _ = parse_descriptions_to_manifest(["59340120rc"], datetime(2026, 3, 5))
+        manifest, _ = parse_descriptions_to_manifest([("0305APO", "59340120rc")], datetime(2026, 3, 5))
         assert manifest["59340120"]["Damage Type"] == "Repair"
         assert manifest["59340120"]["Claim#"] == "Listed"
 
     def test_phase2_all_four_variations(self):
         """Process all four variations in one batch."""
-        descriptions = ["59340120", "59340121r", "59340122c", "59340123rc"]
+        descriptions = [("0305APO", "59340120"), ("0305APO", "59340121r"), ("0305APO", "59340122c"), ("0305APO", "59340123rc")]
         manifest, mva_list = parse_descriptions_to_manifest(descriptions, datetime(2026, 3, 5))
         assert len(manifest) == 4
         assert len(mva_list) == 4
@@ -115,10 +118,10 @@ class TestUT2_HTMLExtraction:
     MOCK_HTML = """
     <html><body>
     <table>
-      <tr><th>Date</th><th>MVA</th><th>Description</th><th>Other</th></tr>
-      <tr><td>2026-03-05</td><td>001</td><td>59340120</td><td>X</td></tr>
-      <tr><td>2026-03-05</td><td>002</td><td>59340121r</td><td>Y</td></tr>
-      <tr><td>2026-03-05</td><td>003</td><td>59340122rc</td><td>Z</td></tr>
+      <tr><th>Type</th><th>Date</th><th>MVA</th><th>Description</th><th>Other</th></tr>
+      <tr><td>batch1</td><td>2026-03-05</td><td>001</td><td>59340120</td><td>X</td></tr>
+      <tr><td>batch1</td><td>2026-03-05</td><td>002</td><td>59340121r</td><td>Y</td></tr>
+      <tr><td>batch1</td><td>2026-03-05</td><td>003</td><td>59340122rc</td><td>Z</td></tr>
     </table>
     </body></html>
     """
@@ -148,11 +151,11 @@ class TestUT2_HTMLExtraction:
 
     def test_extracts_description_column(self):
         result = _parse_html_descriptions(self.MOCK_HTML)
-        assert result == ["59340120", "59340121r", "59340122rc"]
+        assert result == [("batch1", "59340120"), ("batch1", "59340121r"), ("batch1", "59340122rc")]
 
     def test_orca_multiline_cell_splits_into_individual_mvas(self):
         result = _parse_html_descriptions(self.ORCA_HTML)
-        assert result == ["59340120c", "58157002", "58135663cr", "57193500r"]
+        assert result == [("0205", "59340120c"), ("0205", "58157002"), ("0205", "58135663cr"), ("0205", "57193500r")]
 
     def test_returns_empty_on_no_table(self):
         result = _parse_html_descriptions("<html><body><p>No table</p></body></html>")
@@ -171,14 +174,14 @@ class TestUT2_HTMLExtraction:
     def test_skips_empty_description_cells(self):
         html = """
         <table>
-          <tr><th>Description</th></tr>
-          <tr><td>59340120</td></tr>
-          <tr><td></td></tr>
-          <tr><td>59340121r</td></tr>
+          <tr><th>Type</th><th>Description</th></tr>
+          <tr><td>batch1</td><td>59340120</td></tr>
+          <tr><td>batch1</td><td></td></tr>
+          <tr><td>batch1</td><td>59340121r</td></tr>
         </table>
         """
         result = _parse_html_descriptions(html)
-        assert result == ["59340120", "59340121r"]
+        assert result == [("batch1", "59340120"), ("batch1", "59340121r")]
 
     def test_extract_body_prefers_html_with_table(self):
         """_extract_body should return HTML when it contains a <table>."""
@@ -223,39 +226,39 @@ class TestUT4_Sanitization:
     """Ensure malformed entries are rejected and never reach the MVA list."""
 
     def test_too_short(self):
-        manifest, mva_list = parse_descriptions_to_manifest(["12345"], datetime(2026, 3, 5))
+        manifest, mva_list = parse_descriptions_to_manifest([("0305APO", "12345")], datetime(2026, 3, 5))
         assert manifest == {}
         assert mva_list == []
 
     def test_no_digits(self):
-        manifest, mva_list = parse_descriptions_to_manifest(["abcdefgh"], datetime(2026, 3, 5))
+        manifest, mva_list = parse_descriptions_to_manifest([("0305APO", "abcdefgh")], datetime(2026, 3, 5))
         assert manifest == {}
         assert mva_list == []
 
     def test_too_long(self):
-        manifest, mva_list = parse_descriptions_to_manifest(["123456789"], datetime(2026, 3, 5))
+        manifest, mva_list = parse_descriptions_to_manifest([("0305APO", "123456789")], datetime(2026, 3, 5))
         assert manifest == {}
         assert mva_list == []
 
     def test_mixed_valid_and_invalid(self):
-        descriptions = ["59340120", "12345", "abcdefgh", "59340121r"]
+        descriptions = [("0305APO", "59340120"), ("0305APO", "12345"), ("0305APO", "abcdefgh"), ("0305APO", "59340121r")]
         manifest, mva_list = parse_descriptions_to_manifest(descriptions, datetime(2026, 3, 5))
         assert len(manifest) == 2
         assert set(mva_list) == {"59340120", "59340121"}
 
     def test_special_characters(self):
-        manifest, mva_list = parse_descriptions_to_manifest(["5934012!"], datetime(2026, 3, 5))
+        manifest, mva_list = parse_descriptions_to_manifest([("0305APO", "5934012!")], datetime(2026, 3, 5))
         assert manifest == {}
         assert mva_list == []
 
     def test_whitespace_only(self):
-        manifest, mva_list = parse_descriptions_to_manifest(["   "], datetime(2026, 3, 5))
+        manifest, mva_list = parse_descriptions_to_manifest([("0305APO", "   ")], datetime(2026, 3, 5))
         assert manifest == {}
         assert mva_list == []
 
     def test_invalid_suffix(self):
         """'x' is not a valid suffix — should be rejected."""
-        manifest, mva_list = parse_descriptions_to_manifest(["59340120x"], datetime(2026, 3, 5))
+        manifest, mva_list = parse_descriptions_to_manifest([("0305APO", "59340120x")], datetime(2026, 3, 5))
         assert manifest == {}
         assert mva_list == []
 
@@ -397,3 +400,58 @@ class TestUT6_NotificationPayload:
         assert "(2 items)" in sent_messages[0].subject
         assert "59654641" in sent_messages[0].html_body
         assert "60853262" in sent_messages[0].html_body
+
+
+# ─── UT-7: Location Extraction from Type Column ─────────────────────────────
+
+
+class TestUT7_LocationExtraction:
+    """Verify location suffix extraction from Type column (e.g., '0420APO' → 'APO')."""
+
+    def test_apo_suffix(self):
+        """Type column '0420APO' → Location 'APO'."""
+        assert _extract_location_from_type("0420APO") == "APO"
+
+    def test_bb_suffix(self):
+        """Type column '0420BB' → Location 'BB'."""
+        assert _extract_location_from_type("0420BB") == "BB"
+
+    def test_lowercase_suffix_normalized(self):
+        """Type column '0420apo' → Location 'APO' (case-insensitive)."""
+        assert _extract_location_from_type("0420apo") == "APO"
+
+    def test_mixed_case_bb(self):
+        """Type column '0420Bb' → Location 'BB'."""
+        assert _extract_location_from_type("0420Bb") == "BB"
+
+    def test_no_suffix_uses_default(self):
+        """Type column '0420' (no suffix) → falls back to default location."""
+        result = _extract_location_from_type("0420")
+        # Should return the config default location
+        assert result == "APO"
+
+    def test_empty_string_uses_default(self):
+        """Empty Type column → falls back to default location."""
+        result = _extract_location_from_type("")
+        assert result == "APO"
+
+    def test_none_value_uses_default(self):
+        """None Type column → falls back to default location."""
+        result = _extract_location_from_type(None)
+        assert result == "APO"
+
+    def test_whitespace_trimmed(self):
+        """Type column ' 0420APO ' → Location 'APO' (whitespace trimmed)."""
+        assert _extract_location_from_type(" 0420APO ") == "APO"
+
+    def test_unknown_suffix_uses_default(self):
+        """Type column '0420XYZ' (unknown suffix) → falls back to default."""
+        result = _extract_location_from_type("0420XYZ")
+        assert result == "APO"
+
+    def test_manifest_uses_extracted_location(self):
+        """parse_descriptions_to_manifest correctly extracts location from Type."""
+        manifest, _ = parse_descriptions_to_manifest(
+            [("0305BB", "59340120")], datetime(2026, 3, 5)
+        )
+        assert manifest["59340120"]["Location"] == "BB"

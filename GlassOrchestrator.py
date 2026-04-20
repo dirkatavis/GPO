@@ -239,11 +239,11 @@ class OutboundEmail:
 
 # ─── Input Acquisition ────────────────────────────────────────────────────────
 
-def fetch_input_descriptions() -> tuple[list[str], datetime]:
+def fetch_input_descriptions() -> tuple[list[tuple[str, str]], datetime]:
     """
     Connect to Gmail via IMAP, fetch the latest UNSEEN email from the
     target sender, and extract:
-      - A list of raw 'Description' strings (one per line in the body/CSV)
+      - A list of (type_value, description) tuples from the email table
       - The Date header parsed as a datetime object
     """
     log.info("Input acquisition: Connecting to Gmail IMAP …")
@@ -295,13 +295,13 @@ def _fetch_message_by_id(mail: imaplib.IMAP4_SSL, message_id: bytes) -> email.me
     return email.message_from_bytes(raw_email)
 
 
-def _extract_descriptions_from_message(msg: email.message.Message) -> tuple[list[str], datetime]:
-    """Extract parsed descriptions and parsed email datetime from a MIME message."""
+def _extract_descriptions_from_message(msg: email.message.Message) -> tuple[list[tuple[str, str]], datetime]:
+    """Extract parsed (type_value, description) tuples and parsed email datetime from a MIME message."""
     return _extract_descriptions_from_email(InboundEmail.from_message(msg))
 
 
-def _extract_descriptions_from_email(parsed_email: InboundEmail) -> tuple[list[str], datetime]:
-    """Extract parsed descriptions and email datetime from normalized email data."""
+def _extract_descriptions_from_email(parsed_email: InboundEmail) -> tuple[list[tuple[str, str]], datetime]:
+    """Extract parsed (type_value, description) tuples and email datetime from normalized email data."""
     log.info("Input: Email date = %s", parsed_email.sent_at.isoformat())
 
     body = parsed_email.best_body
@@ -368,10 +368,13 @@ def _extract_body(msg: email.message.Message) -> str:
     return body_text or body_html
 
 
-def _parse_descriptions(body: str) -> list[str]:
+def _parse_descriptions(body: str) -> list[tuple[str, str]]:
     """
     Parse the email body as CSV or line-delimited text and return
-    the 'Description' column values.
+    (type_value, description) tuples.
+
+    For CSV with Type and Description columns, extracts both.
+    For plain text fallback, returns empty type_value.
     """
     lines = body.strip().splitlines()
     if not lines:
@@ -380,16 +383,28 @@ def _parse_descriptions(body: str) -> list[str]:
     # Try CSV with a 'Description' header first
     reader = csv.DictReader(lines)
     if reader.fieldnames and "Description" in reader.fieldnames:
-        return [row["Description"].strip() for row in reader if row.get("Description", "").strip()]
+        has_type = "Type" in reader.fieldnames
+        results: list[tuple[str, str]] = []
+        for row in reader:
+            desc = row.get("Description", "").strip()
+            if desc:
+                type_val = row.get("Type", "").strip() if has_type else ""
+                results.append((type_val, desc))
+        return results
 
-    # Fallback: treat each non-empty line as a description
-    return [line.strip() for line in lines if line.strip()]
+    # Fallback: treat each non-empty line as a description (no type_value)
+    return [("", line.strip()) for line in lines if line.strip()]
 
 
-def _parse_html_descriptions(html: str) -> list[str]:
+def _parse_html_descriptions(html: str) -> list[tuple[str, str]]:
     """
-    Extract 'Description' column values from an HTML table (Orca Scan email).
+    Extract 'Type' and 'Description' column values from an HTML table (Orca Scan email).
     Uses BeautifulSoup if available, otherwise falls back to regex.
+
+    Returns:
+        List of (type_value, description) tuples. Each Description cell may contain
+        multiple MVA codes (newline-separated), so one row can produce multiple tuples
+        sharing the same type_value.
     """
     if HAS_BS4:
         return _parse_html_descriptions_bs4(html)
@@ -397,8 +412,8 @@ def _parse_html_descriptions(html: str) -> list[str]:
     return _parse_html_descriptions_regex(html)
 
 
-def _parse_html_descriptions_bs4(html: str) -> list[str]:
-    """Parse Description values from Orca Scan HTML using BeautifulSoup."""
+def _parse_html_descriptions_bs4(html: str) -> list[tuple[str, str]]:
+    """Parse Type and Description values from Orca Scan HTML using BeautifulSoup."""
     soup = BeautifulSoup(html, "html.parser")
     table = _find_primary_table_bs4(soup)
     if not table:
@@ -408,20 +423,25 @@ def _parse_html_descriptions_bs4(html: str) -> list[str]:
     if not rows:
         return []
 
-    desc_idx = _get_description_index_from_cells(
-        [th.get_text(strip=True) for th in rows[0].find_all(["th", "td"])]
-    )
+    header_cells = [th.get_text(strip=True) for th in rows[0].find_all(["th", "td"])]
+    desc_idx = _get_description_index_from_cells(header_cells)
+    type_idx = _get_type_index_from_cells(header_cells)
     if desc_idx is None:
         return []
 
-    descriptions: list[str] = []
+    results: list[tuple[str, str]] = []
     for row in rows[1:]:
         cells = row.find_all("td")
         if len(cells) <= desc_idx:
             continue
+        # Extract type_value from Type column (empty string if column missing)
+        type_val = ""
+        if type_idx is not None and len(cells) > type_idx:
+            type_val = cells[type_idx].get_text(strip=True)
         raw = cells[desc_idx].get_text(separator="\n", strip=False)
-        descriptions.extend(_split_non_empty_lines(raw))
-    return descriptions
+        for desc in _split_non_empty_lines(raw):
+            results.append((type_val, desc))
+    return results
 
 
 def _find_primary_table_bs4(soup: Any) -> Any | None:
@@ -429,18 +449,19 @@ def _find_primary_table_bs4(soup: Any) -> Any | None:
     return soup.find("table", id="rowData") or soup.find("table")
 
 
-def _parse_html_descriptions_regex(html: str) -> list[str]:
-    """Parse Description values from Orca Scan HTML using regex fallback."""
+def _parse_html_descriptions_regex(html: str) -> list[tuple[str, str]]:
+    """Parse Type and Description values from Orca Scan HTML using regex fallback."""
     search_html = _row_data_extractor(html)
     header_cells = _extract_header_cells_regex(search_html)
     if not header_cells:
         return []
 
     desc_idx = _get_description_index_from_cells(header_cells)
+    type_idx = _get_type_index_from_cells(header_cells)
     if desc_idx is None:
         return []
 
-    descriptions: list[str] = []
+    results: list[tuple[str, str]] = []
     all_rows = re.findall(
         r"<tr[^>]*>(.*?)</tr>", search_html, re.DOTALL | re.IGNORECASE
     )
@@ -451,8 +472,13 @@ def _parse_html_descriptions_regex(html: str) -> list[str]:
         normalized_cells = [re.sub(r"<[^>]+>", "", c).strip() for c in cells]
         if len(normalized_cells) <= desc_idx or not normalized_cells[desc_idx]:
             continue
-        descriptions.extend(_split_non_empty_lines(normalized_cells[desc_idx]))
-    return descriptions
+        # Extract type_value from Type column (empty string if column missing)
+        type_val = ""
+        if type_idx is not None and len(normalized_cells) > type_idx:
+            type_val = normalized_cells[type_idx]
+        for desc in _split_non_empty_lines(normalized_cells[desc_idx]):
+            results.append((type_val, desc))
+    return results
 
 
 def _row_data_extractor(html: str) -> str:
@@ -486,6 +512,31 @@ def _get_description_index_from_cells(cells: list[str]) -> int | None:
     return cells.index("Description")
 
 
+def _get_type_index_from_cells(cells: list[str]) -> int | None:
+    """Return Type column index if present in header cells."""
+    if "Type" not in cells:
+        return None
+    return cells.index("Type")
+
+
+def _extract_location_from_type(type_value: str | None) -> str:
+    """
+    Extract location suffix (APO or BB) from Type column value.
+    
+    Format: MMDD + location suffix (e.g., '0420APO' → 'APO', '0420BB' → 'BB')
+    Returns the configured LOCATION default if extraction fails.
+    """
+    if not type_value:
+        return LOCATION
+    # Extract suffix after 4-digit date prefix
+    type_value = type_value.strip()
+    if len(type_value) > 4:
+        suffix = type_value[4:].upper()
+        if suffix in ("APO", "BB"):
+            return suffix
+    return LOCATION
+
+
 def _split_non_empty_lines(raw_text: str) -> list[str]:
     """Split text by lines and return only non-empty trimmed lines."""
     return [line.strip() for line in raw_text.splitlines() if line.strip()]
@@ -494,12 +545,17 @@ def _split_non_empty_lines(raw_text: str) -> list[str]:
 # ─── Parsing & Normalization ─────────────────────────────────────────────────
 
 # not phase based
-def parse_descriptions_to_manifest(descriptions: list[str], email_date: datetime) -> tuple[dict, list[str]]:
+def parse_descriptions_to_manifest(descriptions: list[tuple[str, str]], email_date: datetime) -> tuple[dict, list[str]]:
     """
     Apply regex to each description string and build a session manifest.
 
+    Args:
+        descriptions: List of (type_value, description) tuples from email parsing.
+                      type_value is the email Type column (e.g., '0420APO').
+        email_date: Email Date header as datetime
+
     Returns:
-        manifest: dict keyed by MVA → {WorkType, ClaimStatus, Description, Date, Location}
+        manifest: dict keyed by MVA → {Arrival Date, MVA, VIN, Make, Location, Damage Type, Claim#, WorkItem}
         mva_list: list of clean 8-digit MVA strings for the worker
     """
     log.info("Parsing: Processing %d descriptions …", len(descriptions))
@@ -507,8 +563,9 @@ def parse_descriptions_to_manifest(descriptions: list[str], email_date: datetime
     manifest: dict[str, dict] = {}
     mva_list: list[str] = []
     date_str = email_date.strftime("%m/%d/%Y")
+    missing_type_count = 0
 
-    for desc in descriptions:
+    for type_value, desc in descriptions:
         match = MVA_PATTERN.match(desc.strip())
         if not match:
             log.warning("Parsing: Malformed entry skipped — '%s'", desc)
@@ -522,18 +579,25 @@ def parse_descriptions_to_manifest(descriptions: list[str], email_date: datetime
         # Claim status values must match allowed UI options.
         claim = "Listed" if "c" in suffixes else "Missing"
 
+        # Extract location from Type column (e.g., '0420APO' → 'APO')
+        location = _extract_location_from_type(type_value)
+        if not type_value:
+            missing_type_count += 1
+
         manifest[mva] = {
             "Arrival Date": date_str,
             "MVA": mva,
             "VIN": "",       # Populated during merge step
             "Make": "",      # Populated during merge from GlassResults Desc
-            "Location": LOCATION,
+            "Location": location,
             "Damage Type": damage_type,
             "Claim#": claim,
             "WorkItem": RUNTIME_CONFIG.get("work_item_default_flag", "verified"),
         }
         mva_list.append(mva)
 
+    if missing_type_count > 0:
+        log.warning("Parsing: %d MVAs missing/empty Type value — using default location '%s'", missing_type_count, LOCATION)
     log.info("Parsing: Manifest built — %d valid MVAs, %d malformed",
              len(manifest), len(descriptions) - len(manifest))
     return manifest, mva_list
@@ -762,7 +826,9 @@ def _load_existing_keys(ws) -> set[str]:
             return existing_keys
         for row in all_vals[1:]:
             if len(row) > max(mva_idx, date_idx) and row[mva_idx].strip():
-                key = f"{row[mva_idx]}|{row[date_idx]}"
+                mva = row[mva_idx].strip()
+                arrival_date = row[date_idx].strip()
+                key = f"{mva}|{arrival_date}"
                 existing_keys.add(key)
     except (AttributeError, KeyError, TypeError, ValueError, OSError) as exc:
         log.warning("Could not read existing sheet data — %s", exc)

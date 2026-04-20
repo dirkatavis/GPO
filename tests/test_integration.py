@@ -124,7 +124,7 @@ class TestIT3_MergeReconciliation:
     def test_left_join_with_missing_mva(self, tmp_path, monkeypatch):
         """One MVA present in results, one missing → VIN=N/A for missing."""
         # Build manifest from parsing step
-        descriptions = ["59340120", "59340121"]
+        descriptions = [("0305APO", "59340120"), ("0305APO", "59340121")]
         manifest, _ = parse_descriptions_to_manifest(descriptions, datetime(2026, 3, 5))
 
         # Create a mock GlassResults.txt with only ONE of the two MVAs
@@ -145,7 +145,7 @@ class TestIT3_MergeReconciliation:
 
     def test_all_mvas_missing_from_results(self, tmp_path, monkeypatch):
         """No scraper results at all → all VINs become N/A."""
-        descriptions = ["59340120", "59340121"]
+        descriptions = [("0305APO", "59340120"), ("0305APO", "59340121")]
         manifest, _ = parse_descriptions_to_manifest(descriptions, datetime(2026, 3, 5))
 
         results_file = tmp_path / "GlassResults.txt"
@@ -160,7 +160,7 @@ class TestIT3_MergeReconciliation:
 
     def test_results_file_missing(self, tmp_path, monkeypatch):
         """No GlassResults.txt file → degrade gracefully, all VINs = N/A."""
-        descriptions = ["59340120"]
+        descriptions = [("0305APO", "59340120")]
         manifest, _ = parse_descriptions_to_manifest(descriptions, datetime(2026, 3, 5))
 
         monkeypatch.setattr("GlassOrchestrator.RESULTS_PATH", tmp_path / "nonexistent.txt")
