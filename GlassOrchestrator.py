@@ -243,7 +243,7 @@ def fetch_input_descriptions() -> tuple[list[tuple[str, str]], datetime]:
     """
     Connect to Gmail via IMAP, fetch the latest UNSEEN email from the
     target sender, and extract:
-      - A list of (batch_id, description) tuples from the email table
+      - A list of (type_value, description) tuples from the email table
       - The Date header parsed as a datetime object
     """
     log.info("Input acquisition: Connecting to Gmail IMAP …")
@@ -296,12 +296,12 @@ def _fetch_message_by_id(mail: imaplib.IMAP4_SSL, message_id: bytes) -> email.me
 
 
 def _extract_descriptions_from_message(msg: email.message.Message) -> tuple[list[tuple[str, str]], datetime]:
-    """Extract parsed (batch_id, description) tuples and parsed email datetime from a MIME message."""
+    """Extract parsed (type_value, description) tuples and parsed email datetime from a MIME message."""
     return _extract_descriptions_from_email(InboundEmail.from_message(msg))
 
 
 def _extract_descriptions_from_email(parsed_email: InboundEmail) -> tuple[list[tuple[str, str]], datetime]:
-    """Extract parsed (batch_id, description) tuples and email datetime from normalized email data."""
+    """Extract parsed (type_value, description) tuples and email datetime from normalized email data."""
     log.info("Input: Email date = %s", parsed_email.sent_at.isoformat())
 
     body = parsed_email.best_body
@@ -371,10 +371,10 @@ def _extract_body(msg: email.message.Message) -> str:
 def _parse_descriptions(body: str) -> list[tuple[str, str]]:
     """
     Parse the email body as CSV or line-delimited text and return
-    (batch_id, description) tuples.
+    (type_value, description) tuples.
 
     For CSV with Type and Description columns, extracts both.
-    For plain text fallback, returns empty batch_id.
+    For plain text fallback, returns empty type_value.
     """
     lines = body.strip().splitlines()
     if not lines:
@@ -388,11 +388,11 @@ def _parse_descriptions(body: str) -> list[tuple[str, str]]:
         for row in reader:
             desc = row.get("Description", "").strip()
             if desc:
-                batch_id = row.get("Type", "").strip() if has_type else ""
-                results.append((batch_id, desc))
+                type_val = row.get("Type", "").strip() if has_type else ""
+                results.append((type_val, desc))
         return results
 
-    # Fallback: treat each non-empty line as a description (no batch_id)
+    # Fallback: treat each non-empty line as a description (no type_value)
     return [("", line.strip()) for line in lines if line.strip()]
 
 
@@ -402,9 +402,9 @@ def _parse_html_descriptions(html: str) -> list[tuple[str, str]]:
     Uses BeautifulSoup if available, otherwise falls back to regex.
 
     Returns:
-        List of (batch_id, description) tuples. Each Description cell may contain
+        List of (type_value, description) tuples. Each Description cell may contain
         multiple MVA codes (newline-separated), so one row can produce multiple tuples
-        sharing the same batch_id.
+        sharing the same type_value.
     """
     if HAS_BS4:
         return _parse_html_descriptions_bs4(html)
@@ -434,13 +434,13 @@ def _parse_html_descriptions_bs4(html: str) -> list[tuple[str, str]]:
         cells = row.find_all("td")
         if len(cells) <= desc_idx:
             continue
-        # Extract batch_id from Type column (empty string if column missing)
-        batch_id = ""
+        # Extract type_value from Type column (empty string if column missing)
+        type_val = ""
         if type_idx is not None and len(cells) > type_idx:
-            batch_id = cells[type_idx].get_text(strip=True)
+            type_val = cells[type_idx].get_text(strip=True)
         raw = cells[desc_idx].get_text(separator="\n", strip=False)
         for desc in _split_non_empty_lines(raw):
-            results.append((batch_id, desc))
+            results.append((type_val, desc))
     return results
 
 
@@ -472,12 +472,12 @@ def _parse_html_descriptions_regex(html: str) -> list[tuple[str, str]]:
         normalized_cells = [re.sub(r"<[^>]+>", "", c).strip() for c in cells]
         if len(normalized_cells) <= desc_idx or not normalized_cells[desc_idx]:
             continue
-        # Extract batch_id from Type column (empty string if column missing)
-        batch_id = ""
+        # Extract type_value from Type column (empty string if column missing)
+        type_val = ""
         if type_idx is not None and len(normalized_cells) > type_idx:
-            batch_id = normalized_cells[type_idx]
+            type_val = normalized_cells[type_idx]
         for desc in _split_non_empty_lines(normalized_cells[desc_idx]):
-            results.append((batch_id, desc))
+            results.append((type_val, desc))
     return results
 
 
@@ -519,7 +519,7 @@ def _get_type_index_from_cells(cells: list[str]) -> int | None:
     return cells.index("Type")
 
 
-def _extract_location_from_type(type_value: str) -> str:
+def _extract_location_from_type(type_value: str | None) -> str:
     """
     Extract location suffix (APO or BB) from Type column value.
     
@@ -550,11 +550,12 @@ def parse_descriptions_to_manifest(descriptions: list[tuple[str, str]], email_da
     Apply regex to each description string and build a session manifest.
 
     Args:
-        descriptions: List of (batch_id, description) tuples from email parsing
+        descriptions: List of (type_value, description) tuples from email parsing.
+                      type_value is the email Type column (e.g., '0420APO').
         email_date: Email Date header as datetime
 
     Returns:
-        manifest: dict keyed by MVA → {Batch ID, WorkType, ClaimStatus, Description, Date, Location}
+        manifest: dict keyed by MVA → {Arrival Date, MVA, VIN, Make, Location, Damage Type, Claim#, WorkItem}
         mva_list: list of clean 8-digit MVA strings for the worker
     """
     log.info("Parsing: Processing %d descriptions …", len(descriptions))
@@ -596,7 +597,7 @@ def parse_descriptions_to_manifest(descriptions: list[tuple[str, str]], email_da
         mva_list.append(mva)
 
     if missing_type_count > 0:
-        log.warning("Parsing: %d MVAs missing Type column — using default location '%s'", missing_type_count, LOCATION)
+        log.warning("Parsing: %d MVAs missing/empty Type value — using default location '%s'", missing_type_count, LOCATION)
     log.info("Parsing: Manifest built — %d valid MVAs, %d malformed",
              len(manifest), len(descriptions) - len(manifest))
     return manifest, mva_list
@@ -755,8 +756,8 @@ def persist_new_rows(df: pd.DataFrame) -> pd.DataFrame:
     Append merged data to Google Sheet 'ATL_Data 2026 : GlassClaims'.
 
     Inserts new rows above the summary section so formulas stay intact.
-    Idempotency: Composite key (MVA + Arrival Date + Batch ID) is checked
-    against existing rows. Duplicate rows are silently skipped.
+    Idempotency: Composite key (MVA + Arrival Date) is checked against
+    existing rows. Duplicate rows are silently skipped.
 
     Returns the DataFrame of actually-new rows written.
     """
@@ -884,9 +885,6 @@ def _build_html_table(df: pd.DataFrame) -> str:
             style = ""
             vin_cell = f"<td>{row['VIN']}</td>"
 
-        batch_id = row.get('Batch ID', '')
-        if pd.isna(batch_id):
-            batch_id = ''
         rows_html += f"""<tr{style}>
             <td>{row['Arrival Date']}</td>
             <td>{row['MVA']}</td>
