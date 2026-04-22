@@ -35,6 +35,7 @@
   "columns": [
     "Arrival Date",
     "MVA",
+    "FPO#",
     "VIN",
     "Make",
     "Location",

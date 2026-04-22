@@ -71,6 +71,7 @@ def _load_runtime_config(config_path: Path) -> dict:
         "columns": [
             "Arrival Date",
             "MVA",
+            "FPO#",
             "VIN",
             "Make",
             "Location",
@@ -555,7 +556,7 @@ def parse_descriptions_to_manifest(descriptions: list[tuple[str, str]], email_da
         email_date: Email Date header as datetime
 
     Returns:
-        manifest: dict keyed by MVA → {Arrival Date, MVA, VIN, Make, Location, Damage Type, Claim#, WorkItem}
+        manifest: dict keyed by MVA → {Arrival Date, MVA, FPO#, VIN, Make, Location, Damage Type, Claim#, WorkItem}
         mva_list: list of clean 8-digit MVA strings for the worker
     """
     log.info("Parsing: Processing %d descriptions …", len(descriptions))
@@ -587,6 +588,7 @@ def parse_descriptions_to_manifest(descriptions: list[tuple[str, str]], email_da
         manifest[mva] = {
             "Arrival Date": date_str,
             "MVA": mva,
+            "FPO#": "",      # Manually maintained — pipeline writes blank
             "VIN": "",       # Populated during merge step
             "Make": "",      # Populated during merge from GlassResults Desc
             "Location": location,

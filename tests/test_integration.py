@@ -182,6 +182,7 @@ class TestIT4_SpreadsheetPersistence:
             rows.append({
                 "Arrival Date": date,
                 "MVA": mva,
+                "FPO#": "",
                 "VIN": "1HGCM82633A004352",
                 "Make": "Windshield",
                 "Location": "APO",
@@ -194,7 +195,7 @@ class TestIT4_SpreadsheetPersistence:
     def _mock_worksheet(self, existing_rows=None):
         """Create a mock worksheet with optional existing data."""
         ws = MagicMock()
-        header = ["Arrival Date", "MVA", "VIN", "Make", "Location",
+        header = ["Arrival Date", "MVA", "FPO#", "VIN", "Make", "Location",
                   "Damage Type", "Claim#", "WorkItem"]
         if existing_rows is None:
             existing_rows = []
@@ -220,7 +221,7 @@ class TestIT4_SpreadsheetPersistence:
     @patch("GlassOrchestrator._get_worksheet")
     def test_appends_without_overwriting(self, mock_get_ws):
         """Second write appends new rows; existing data untouched."""
-        existing = [["03/05/2026", "59340120", "1HGCM82633A004352",
+        existing = [["03/05/2026", "59340120", "", "1HGCM82633A004352",
                       "Windshield", "APO", "Replacement", "Missing", "verified"]]
         ws = self._mock_worksheet(existing)
         mock_get_ws.return_value = ws
@@ -236,7 +237,7 @@ class TestIT4_SpreadsheetPersistence:
     @patch("GlassOrchestrator._get_worksheet")
     def test_idempotency_prevents_duplicate(self, mock_get_ws):
         """Same MVA+Date already in sheet → no rows inserted."""
-        existing = [["03/05/2026", "59340120", "1HGCM82633A004352",
+        existing = [["03/05/2026", "59340120", "", "1HGCM82633A004352",
                       "Windshield", "APO", "Replacement", "Missing", "verified"]]
         ws = self._mock_worksheet(existing)
         mock_get_ws.return_value = ws
@@ -249,7 +250,7 @@ class TestIT4_SpreadsheetPersistence:
 
     @patch("GlassOrchestrator._get_worksheet")
     def test_correct_columns_written(self, mock_get_ws):
-        """Verify all 8 columns match the expected schema."""
+        """Verify all 9 columns match the expected schema."""
         ws = self._mock_worksheet()
         mock_get_ws.return_value = ws
 
@@ -257,7 +258,7 @@ class TestIT4_SpreadsheetPersistence:
         persist_new_rows(df)
 
         written = ws.insert_rows.call_args[0][0]
-        assert written[0] == ["03/05/2026", "59340120", "1HGCM82633A004352",
+        assert written[0] == ["03/05/2026", "59340120", "", "1HGCM82633A004352",
                                 "Windshield", "APO", "Replacement", "Missing", "verified"]
 
 
