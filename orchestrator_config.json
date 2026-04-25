@@ -16,7 +16,7 @@
   "mva_pattern_comment": "Regex to parse Orca Scan strings. Group 1: MVA (8 digits), Group 2: AREA_ID (uppercase letters), Group 3: repair flag (r or empty), Group 4: claim flag (c or empty). Do not change unless scan format changes.",
   "mva_pattern": "^(\\d{8})([A-Z]+)([r]?)([c]?)$",
 
-  "areas_comment": "Map of valid AREA_ID codes to human-readable labels. Used by the parser to validate and label the Damage Area column.",
+  "areas_comment": "Map of valid AREA_ID codes to human-readable labels. Used by the parser to validate and label the Area column.",
   "areas": {
     "WS":  "Windshield",
     "FLD": "Front Left Door",
@@ -34,7 +34,7 @@
   "repair_eligible_areas_comment": "AREA_ID codes on which the repair flag (r) is valid. All other areas with an r flag are an INVALID_REPAIR error.",
   "repair_eligible_areas": ["WS"],
 
-  "vendor_labels_comment": "Maps internal Damage Type values to the vendor strings written to the sheet and rendered in notification emails. Internal pipeline logic always uses the keys (Repair/Replacement).",
+  "vendor_labels_comment": "Maps internal Action values to the vendor strings written to the sheet and rendered in notification emails. Internal pipeline logic always uses the keys (Repair/Replacement).",
   "vendor_labels": {
     "Repair":      "Repair(SuperGlass)",
     "Replacement": "Replace(AGN)"

@@ -579,10 +579,9 @@ def parse_descriptions_to_manifest(descriptions: list[tuple[str, str]], email_da
       r = repair flag (only valid on repair-eligible areas, e.g. WS)
       c = claim listed flag
 
-    On parse error the row is written to the manifest with the error code
-    (MALFORMED_SCAN | AMBIGUOUS_LOCATION | INVALID_REPAIR) in the
-    Damage Area field and other variable fields blank.  This satisfies
-    the Option-A decision: errors land in the sheet for auditor review.
+    On parse error (MALFORMED_SCAN, AMBIGUOUS_LOCATION, INVALID_REPAIR) the
+    entry is logged as a warning and skipped entirely.  No error rows are
+    written to the manifest or the sheet.
 
     Args:
         descriptions: List of (type_value, description) tuples from email parsing.
@@ -590,9 +589,8 @@ def parse_descriptions_to_manifest(descriptions: list[tuple[str, str]], email_da
         email_date: Email Date header as datetime
 
     Returns:
-        manifest: dict keyed by MVA (or scan string for MALFORMED_SCAN) →
-                  {Arrival Date, MVA, FPO#, VIN, Make, Location, Damage Type,
-                   Damage Area, Claim#, WorkItem}
+        manifest: dict keyed by MVA → {Arrival Date, MVA, FPO#, VIN, Make,
+                  Location, Action, Area, Claim#, WorkItem}
         mva_list: list of clean 8-digit MVA strings for the worker (errors excluded)
     """
     log.info("Parsing: Processing %d descriptions …", len(descriptions))

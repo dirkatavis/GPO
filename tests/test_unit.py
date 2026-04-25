@@ -33,7 +33,7 @@ from GlassOrchestrator import (
 
 class TestUT1_SuffixRegex:
     """Verify the parser correctly extracts the 8-digit MVA and maps
-    Damage Type / Damage Area / Claim# for all four flag combinations.
+    Action / Area / Claim# for all four flag combinations.
     Scan format: <MVA:8digits><AREA_ID:uppercase>[r][c]"""
 
     def test_plain_mva(self):
