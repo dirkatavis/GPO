@@ -10,24 +10,21 @@ class Navigator:
 
     def go_to(self, url: str, label: str = "page", verify: bool = True):
         """Navigate to a URL. Optionally call verify afterwards."""
-        try:
-            log.info(f"[NAV] Navigating to {label} - {url}")
-        except UnicodeEncodeError:
-            log.info(f"[NAV] Navigating to {label} - {url.encode('utf-8', 'ignore').decode('utf-8')}")
+        log.info("[NAV] Navigating to %s", label)
         self.driver.get(url)
 
         if verify:
-            return self.verify(url=url)
+            return self.verify(url=url, label=label)
         return {"status": "ok"}
 
-    def verify(self, url: str = None, check_locator=None, timeout: int = 15):
+    def verify(self, url: str = None, label: str = "page", check_locator=None, timeout: int = 15):
         """Verify page has loaded (readyState, URL match, optional element)."""
         WebDriverWait(self.driver, timeout).until(
             lambda d: d.execute_script("return document.readyState") == "complete"
         )
 
         if url and not self.driver.current_url.startswith(url):
-            log.warning(f"[NAV] Expected {url}, got {self.driver.current_url}")
+            log.warning("[NAV] Expected %s, got unexpected page", label)
             return {"status": "failed", "reason": "url_mismatch"}
 
         if check_locator:
