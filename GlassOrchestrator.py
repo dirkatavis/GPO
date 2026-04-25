@@ -63,7 +63,25 @@ def _load_runtime_config(config_path: Path) -> dict:
         "smtp_server": "smtp.gmail.com",
         "smtp_port": 587,
         "target_sender": "export@orcascan.com",
-        "mva_pattern": r"^(\d{8})([rc]*)$",
+        "mva_pattern": r"^(\d{8})([A-Z]+)([r]?)([c]?)$",
+        "areas": {
+            "WS":  "Windshield",
+            "FLD": "Front Left Door",
+            "FRD": "Front Right Door",
+            "RLD": "Rear Left Door",
+            "RRD": "Rear Right Door",
+            "FLV": "Front Left Vent",
+            "FRV": "Front Right Vent",
+            "BW":  "Back Window",
+            "SR":  "Sunroof",
+            "RLQ": "Rear Left Quarter",
+            "RRQ": "Rear Right Quarter",
+        },
+        "repair_eligible_areas": ["WS"],
+        "vendor_labels": {
+            "Repair":      "Repair(SuperGlass)",
+            "Replacement": "Replace(AGN)",
+        },
         "cycle_tracker_store": "data/mva_cycle_tracker.json",
         "cycle_gap_grace_days": 1,
         "cycle_completed_retention": 1000,
@@ -75,7 +93,8 @@ def _load_runtime_config(config_path: Path) -> dict:
             "VIN",
             "Make",
             "Location",
-            "Damage Type",
+            "Action",
+            "Area",
             "Claim#",
             "WorkItem",
         ],
@@ -173,9 +192,15 @@ else:
 
 TARGET_SENDER = str(RUNTIME_CONFIG["target_sender"])
 MVA_PATTERN = _compile_regex_with_fallback(
-    str(RUNTIME_CONFIG.get("mva_pattern", r"^(\d{8})([rc]*)$")),
-    r"^(\d{8})([rc]*)$",
+    str(RUNTIME_CONFIG.get("mva_pattern", r"^(\d{8})([A-Z]+)([r]?)([c]?)$")),
+    r"^(\d{8})([A-Z]+)([r]?)([c]?)$",
 )
+AREAS: dict[str, str] = dict(RUNTIME_CONFIG.get("areas", {}))
+REPAIR_ELIGIBLE_AREAS: set[str] = set(RUNTIME_CONFIG.get("repair_eligible_areas", ["WS"]))
+VENDOR_LABELS: dict[str, str] = dict(RUNTIME_CONFIG.get("vendor_labels", {
+    "Repair": "Repair(SuperGlass)",
+    "Replacement": "Replace(AGN)",
+}))
 LOCATION = str(RUNTIME_CONFIG["location"])
 COLUMNS = list(RUNTIME_CONFIG["columns"])
 CYCLE_TRACKER_STORE = _resolve_config_path(str(RUNTIME_CONFIG.get("cycle_tracker_store", "data/mva_cycle_tracker.json")))
@@ -550,14 +575,25 @@ def parse_descriptions_to_manifest(descriptions: list[tuple[str, str]], email_da
     """
     Apply regex to each description string and build a session manifest.
 
+    Scan format: <MVA:8 digits><AREA_ID:uppercase>[r][c]
+      r = repair flag (only valid on repair-eligible areas, e.g. WS)
+      c = claim listed flag
+
+    On parse error the row is written to the manifest with the error code
+    (MALFORMED_SCAN | AMBIGUOUS_LOCATION | INVALID_REPAIR) in the
+    Damage Area field and other variable fields blank.  This satisfies
+    the Option-A decision: errors land in the sheet for auditor review.
+
     Args:
         descriptions: List of (type_value, description) tuples from email parsing.
                       type_value is the email Type column (e.g., '0420APO').
         email_date: Email Date header as datetime
 
     Returns:
-        manifest: dict keyed by MVA → {Arrival Date, MVA, FPO#, VIN, Make, Location, Damage Type, Claim#, WorkItem}
-        mva_list: list of clean 8-digit MVA strings for the worker
+        manifest: dict keyed by MVA (or scan string for MALFORMED_SCAN) →
+                  {Arrival Date, MVA, FPO#, VIN, Make, Location, Damage Type,
+                   Damage Area, Claim#, WorkItem}
+        mva_list: list of clean 8-digit MVA strings for the worker (errors excluded)
     """
     log.info("Parsing: Processing %d descriptions …", len(descriptions))
 
@@ -565,25 +601,38 @@ def parse_descriptions_to_manifest(descriptions: list[tuple[str, str]], email_da
     mva_list: list[str] = []
     date_str = email_date.strftime("%m/%d/%Y")
     missing_type_count = 0
+    default_work_item = RUNTIME_CONFIG.get("work_item_default_flag", "verified")
 
     for type_value, desc in descriptions:
-        match = MVA_PATTERN.match(desc.strip())
-        if not match:
-            log.warning("Parsing: Malformed entry skipped — '%s'", desc)
-            continue
-
-        mva = match.group(1)
-        suffixes = match.group(2)
-        # ideally make this configurable so we don't crack the code to make changes
-
-        damage_type = "Repair" if "r" in suffixes else "Replacement"
-        # Claim status values must match allowed UI options.
-        claim = "Listed" if "c" in suffixes else "Missing"
-
-        # Extract location from Type column (e.g., '0420APO' → 'APO')
+        raw = desc.strip()
         location = _extract_location_from_type(type_value)
         if not type_value:
             missing_type_count += 1
+
+        match = MVA_PATTERN.match(raw)
+        if not match:
+            log.warning("Parsing: MALFORMED_SCAN — scan='%s'", raw)
+            continue
+
+        mva = match.group(1)
+        area_code = match.group(2)
+        repair_flag = match.group(3)   # "r" or ""
+        claim_flag = match.group(4)    # "c" or ""
+
+        # Validate area code against config
+        if area_code not in AREAS:
+            log.warning("Parsing: AMBIGUOUS_LOCATION — scan='%s'", raw)
+            continue
+
+        # Repair flag only valid on repair-eligible areas
+        if repair_flag and area_code not in REPAIR_ELIGIBLE_AREAS:
+            log.warning("Parsing: INVALID_REPAIR — scan='%s'", raw)
+            continue
+
+        damage_type = "Repair" if repair_flag else "Replacement"
+        damage_area = AREAS[area_code]
+        # Claim status values must match allowed UI options.
+        claim = "Listed" if claim_flag else "Missing"
 
         manifest[mva] = {
             "Arrival Date": date_str,
@@ -592,16 +641,16 @@ def parse_descriptions_to_manifest(descriptions: list[tuple[str, str]], email_da
             "VIN": "",       # Populated during merge step
             "Make": "",      # Populated during merge from GlassResults Desc
             "Location": location,
-            "Damage Type": damage_type,
+            "Action": damage_type,
+            "Area": damage_area,
             "Claim#": claim,
-            "WorkItem": RUNTIME_CONFIG.get("work_item_default_flag", "verified"),
+            "WorkItem": default_work_item,
         }
         mva_list.append(mva)
 
     if missing_type_count > 0:
-        log.warning("Parsing: %d MVAs missing/empty Type value — using default location '%s'", missing_type_count, LOCATION)
-    log.info("Parsing: Manifest built — %d valid MVAs, %d malformed",
-             len(manifest), len(descriptions) - len(manifest))
+        log.warning("Parsing: %d entries missing/empty Type value — using default location '%s'", missing_type_count, LOCATION)
+    log.info("Parsing: Manifest built — %d valid MVAs", len(mva_list))
     return manifest, mva_list
 
 
@@ -807,8 +856,23 @@ def _find_insert_row(ws) -> int:
 
 
 def _rows_from_dataframe(df: pd.DataFrame) -> list[list[str]]:
-    """Build sheet row payloads in the canonical column order."""
-    return [[row[col] for col in COLUMNS] for _, row in df.iterrows()]
+    """Build sheet row payloads in the canonical column order.
+
+    Action is mapped to its vendor label (e.g. 'Repair' →
+    'Repair(SuperGlass)') via VENDOR_LABELS before writing.  Internal
+    pipeline logic always uses the short form; the sheet receives the
+    display form.
+    """
+    rows = []
+    for _, row in df.iterrows():
+        values = []
+        for col in COLUMNS:
+            val = row[col]
+            if col == "Action":
+                val = VENDOR_LABELS.get(str(val), val)
+            values.append(val)
+        rows.append(values)
+    return rows
 
 
 def _load_existing_keys(ws) -> set[str]:
@@ -893,7 +957,8 @@ def _build_html_table(df: pd.DataFrame) -> str:
             {vin_cell}
             <td>{row['Make']}</td>
             <td>{row['Location']}</td>
-            <td>{row['Damage Type']}</td>
+            <td>{VENDOR_LABELS.get(str(row['Action']), row['Action'])}</td>
+            <td>{row['Area']}</td>
             <td>{row['Claim#']}</td>
             <td>{row['WorkItem']}</td>
         </tr>\n"""
@@ -928,7 +993,7 @@ def _build_html_table(df: pd.DataFrame) -> str:
                 <tr>
                     <th>Arrival Date</th><th>MVA</th><th>VIN</th>
                     <th>Make</th><th>Location</th>
-                    <th>Damage Type</th><th>Claim#</th><th>WorkItem</th>
+                    <th>Action</th><th>Area</th><th>Claim#</th><th>WorkItem</th>
                 </tr>
             </thead>
             <tbody>

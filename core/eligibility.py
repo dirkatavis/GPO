@@ -18,10 +18,12 @@ def is_notification_eligible(row: dict) -> bool:
     """
     Return True if this row should trigger notification and work item creation.
     Replacement items are eligible; Repair items are not.
-    Supports both 'damage_type' (internal) and 'Damage Type' (sheet) key formats.
-    Missing or empty value defaults to eligible (Replacement).
+    Supports both 'damage_type' (internal), 'Action' (sheet) and legacy
+    'Damage Type' key formats. Missing or empty value defaults to eligible.
     """
-    if "Damage Type" in row:
+    if "Action" in row:
+        raw = row["Action"]
+    elif "Damage Type" in row:
         raw = row["Damage Type"]
     else:
         raw = row.get("damage_type")

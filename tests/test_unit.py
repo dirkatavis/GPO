@@ -33,79 +33,167 @@ from GlassOrchestrator import (
 
 class TestUT1_SuffixRegex:
     """Verify the parser correctly extracts the 8-digit MVA and maps
-    Damage Type / Claim# for all four suffix variations."""
+    Damage Type / Damage Area / Claim# for all four flag combinations.
+    Scan format: <MVA:8digits><AREA_ID:uppercase>[r][c]"""
 
     def test_plain_mva(self):
-        """59340120 → Replacement, Missing"""
-        m = MVA_PATTERN.match("59340120")
+        """59340120WS → group 1=MVA, 2=AREA_ID, 3=empty, 4=empty"""
+        m = MVA_PATTERN.match("59340120WS")
         assert m is not None
         assert m.group(1) == "59340120"
-        assert m.group(2) == ""
+        assert m.group(2) == "WS"
+        assert m.group(3) == ""
+        assert m.group(4) == ""
 
     def test_repair_suffix(self):
-        """59340120r → Repair, Missing"""
-        m = MVA_PATTERN.match("59340120r")
+        """59340120WSr → repair flag captured in group 3"""
+        m = MVA_PATTERN.match("59340120WSr")
         assert m is not None
         assert m.group(1) == "59340120"
-        assert "r" in m.group(2)
+        assert m.group(2) == "WS"
+        assert m.group(3) == "r"
+        assert m.group(4) == ""
 
     def test_claim_suffix(self):
-        """59340120c → Replacement, Listed"""
-        m = MVA_PATTERN.match("59340120c")
+        """59340120WSc → claim flag captured in group 4"""
+        m = MVA_PATTERN.match("59340120WSc")
         assert m is not None
         assert m.group(1) == "59340120"
-        assert "c" in m.group(2)
+        assert m.group(2) == "WS"
+        assert m.group(3) == ""
+        assert m.group(4) == "c"
 
     def test_both_suffixes(self):
-        """59340120rc → Repair, Listed"""
-        m = MVA_PATTERN.match("59340120rc")
+        """59340120WSrc → both flags captured"""
+        m = MVA_PATTERN.match("59340120WSrc")
         assert m is not None
         assert m.group(1) == "59340120"
-        assert "r" in m.group(2) and "c" in m.group(2)
+        assert m.group(2) == "WS"
+        assert m.group(3) == "r"
+        assert m.group(4) == "c"
+
+    def test_no_area_code_does_not_match(self):
+        """Bare MVA with no area code must not match (AREA_ID required)."""
+        assert MVA_PATTERN.match("59340120") is None
 
     def test_phase2_mapping_plain(self):
-        """End-to-end: plain MVA → Replacement + Missing"""
+        """End-to-end: 59340120WS → Replacement, WS, Missing"""
         manifest, mva_list = parse_descriptions_to_manifest(
-            [("0305APO", "59340120")], datetime(2026, 3, 5)
+            [("0305APO", "59340120WS")], datetime(2026, 3, 5)
         )
         assert "59340120" in manifest
-        assert manifest["59340120"]["Damage Type"] == "Replacement"
+        assert manifest["59340120"]["Action"] == "Replacement"
+        assert manifest["59340120"]["Area"] == "Windshield"
         assert manifest["59340120"]["Claim#"] == "Missing"
         assert manifest["59340120"]["Location"] == "APO"
         assert mva_list == ["59340120"]
 
     def test_phase2_mapping_repair(self):
-        """59340120r → Repair + Missing"""
-        manifest, _ = parse_descriptions_to_manifest([("0305APO", "59340120r")], datetime(2026, 3, 5))
-        assert manifest["59340120"]["Damage Type"] == "Repair"
+        """59340120WSr → Repair, Windshield, Missing"""
+        manifest, _ = parse_descriptions_to_manifest([("0305APO", "59340120WSr")], datetime(2026, 3, 5))
+        assert manifest["59340120"]["Action"] == "Repair"
+        assert manifest["59340120"]["Area"] == "Windshield"
         assert manifest["59340120"]["Claim#"] == "Missing"
 
     def test_phase2_mapping_claim(self):
-        """59340120c → Replacement + Listed"""
-        manifest, _ = parse_descriptions_to_manifest([("0305APO", "59340120c")], datetime(2026, 3, 5))
-        assert manifest["59340120"]["Damage Type"] == "Replacement"
+        """59340120WSc → Replacement, Windshield, Listed"""
+        manifest, _ = parse_descriptions_to_manifest([("0305APO", "59340120WSc")], datetime(2026, 3, 5))
+        assert manifest["59340120"]["Action"] == "Replacement"
+        assert manifest["59340120"]["Area"] == "Windshield"
         assert manifest["59340120"]["Claim#"] == "Listed"
 
     def test_phase2_mapping_both(self):
-        """59340120rc → Repair + Listed"""
-        manifest, _ = parse_descriptions_to_manifest([("0305APO", "59340120rc")], datetime(2026, 3, 5))
-        assert manifest["59340120"]["Damage Type"] == "Repair"
+        """59340120WSrc → Repair, Windshield, Listed"""
+        manifest, _ = parse_descriptions_to_manifest([("0305APO", "59340120WSrc")], datetime(2026, 3, 5))
+        assert manifest["59340120"]["Action"] == "Repair"
+        assert manifest["59340120"]["Area"] == "Windshield"
         assert manifest["59340120"]["Claim#"] == "Listed"
 
     def test_phase2_all_four_variations(self):
-        """Process all four variations in one batch."""
-        descriptions = [("0305APO", "59340120"), ("0305APO", "59340121r"), ("0305APO", "59340122c"), ("0305APO", "59340123rc")]
+        """Process all four flag combinations in one batch."""
+        descriptions = [
+            ("0305APO", "59340120WS"),    # Replacement, Windshield, Missing
+            ("0305APO", "59340121WSr"),   # Repair, Windshield, Missing (WS only)
+            ("0305APO", "59340122BWc"),   # Replacement, Back Window, Listed
+            ("0305APO", "59340123WSrc"),  # Repair, Windshield, Listed
+        ]
         manifest, mva_list = parse_descriptions_to_manifest(descriptions, datetime(2026, 3, 5))
         assert len(manifest) == 4
         assert len(mva_list) == 4
-        assert manifest["59340120"]["Damage Type"] == "Replacement"
+        assert manifest["59340120"]["Action"] == "Replacement"
+        assert manifest["59340120"]["Area"] == "Windshield"
         assert manifest["59340120"]["Claim#"] == "Missing"
-        assert manifest["59340121"]["Damage Type"] == "Repair"
+        assert manifest["59340121"]["Action"] == "Repair"
+        assert manifest["59340121"]["Area"] == "Windshield"
         assert manifest["59340121"]["Claim#"] == "Missing"
-        assert manifest["59340122"]["Damage Type"] == "Replacement"
+        assert manifest["59340122"]["Action"] == "Replacement"
+        assert manifest["59340122"]["Area"] == "Back Window"
         assert manifest["59340122"]["Claim#"] == "Listed"
-        assert manifest["59340123"]["Damage Type"] == "Repair"
+        assert manifest["59340123"]["Action"] == "Repair"
+        assert manifest["59340123"]["Area"] == "Windshield"
         assert manifest["59340123"]["Claim#"] == "Listed"
+
+
+# ─── UT-1b: Scan Error Codes ─────────────────────────────────────────────────
+
+
+class TestUT1b_ScanErrorCodes:
+    """Error scans are logged and excluded from processing.
+    The manifest must NOT contain any entry for an errored scan."""
+
+    def test_ambiguous_location(self):
+        """Unknown area code → AMBIGUOUS_LOCATION logged, scan excluded."""
+        manifest, mva_list = parse_descriptions_to_manifest(
+            [("0305APO", "59340120ZZ")], datetime(2026, 3, 5)
+        )
+        assert manifest == {}
+        assert mva_list == []
+
+    def test_invalid_repair_on_non_windshield(self):
+        """Repair flag on non-repair-eligible area → INVALID_REPAIR logged, scan excluded."""
+        manifest, mva_list = parse_descriptions_to_manifest(
+            [("0305APO", "59340120BWr")], datetime(2026, 3, 5)
+        )
+        assert manifest == {}
+        assert mva_list == []
+
+    def test_malformed_scan(self):
+        """Unparseable scan string → MALFORMED_SCAN logged, scan excluded."""
+        manifest, mva_list = parse_descriptions_to_manifest(
+            [("0305APO", "garbage")], datetime(2026, 3, 5)
+        )
+        assert manifest == {}
+        assert mva_list == []
+
+    def test_spec_example_wsrc(self):
+        """59193750WSrc → Repair, Windshield, Listed (spec example 1)."""
+        manifest, mva_list = parse_descriptions_to_manifest(
+            [("0305APO", "59193750WSrc")], datetime(2026, 3, 5)
+        )
+        assert manifest["59193750"]["Action"] == "Repair"
+        assert manifest["59193750"]["Area"] == "Windshield"
+        assert manifest["59193750"]["Claim#"] == "Listed"
+        assert mva_list == ["59193750"]
+
+    def test_spec_example_fldc(self):
+        """59536396FLDc → Replacement, Front Left Door, Listed (spec example 2)."""
+        manifest, mva_list = parse_descriptions_to_manifest(
+            [("0305APO", "59536396FLDc")], datetime(2026, 3, 5)
+        )
+        assert manifest["59536396"]["Action"] == "Replacement"
+        assert manifest["59536396"]["Area"] == "Front Left Door"
+        assert manifest["59536396"]["Claim#"] == "Listed"
+        assert mva_list == ["59536396"]
+
+    def test_spec_example_bw(self):
+        """61066902BW → Replacement, Back Window, Missing (spec example 3)."""
+        manifest, mva_list = parse_descriptions_to_manifest(
+            [("0305APO", "61066902BW")], datetime(2026, 3, 5)
+        )
+        assert manifest["61066902"]["Action"] == "Replacement"
+        assert manifest["61066902"]["Area"] == "Back Window"
+        assert manifest["61066902"]["Claim#"] == "Missing"
+        assert mva_list == ["61066902"]
 
 
 # ─── UT-2: HTML Extraction ────────────────────────────────────────────────────
@@ -223,7 +311,8 @@ class TestUT3_Idempotency:
 
 
 class TestUT4_Sanitization:
-    """Ensure malformed entries are rejected and never reach the MVA list."""
+    """Ensure malformed entries do not reach the worker MVA list.
+    Malformed scans are logged and excluded from both the manifest and mva_list."""
 
     def test_too_short(self):
         manifest, mva_list = parse_descriptions_to_manifest([("0305APO", "12345")], datetime(2026, 3, 5))
@@ -236,14 +325,21 @@ class TestUT4_Sanitization:
         assert mva_list == []
 
     def test_too_long(self):
+        """9 numeric digits with no valid area code — MALFORMED_SCAN."""
         manifest, mva_list = parse_descriptions_to_manifest([("0305APO", "123456789")], datetime(2026, 3, 5))
         assert manifest == {}
         assert mva_list == []
 
     def test_mixed_valid_and_invalid(self):
-        descriptions = [("0305APO", "59340120"), ("0305APO", "12345"), ("0305APO", "abcdefgh"), ("0305APO", "59340121r")]
+        """Valid scans with area codes reach mva_list; invalid scans are silently excluded."""
+        descriptions = [
+            ("0305APO", "59340120WS"),   # valid
+            ("0305APO", "12345"),          # too short → excluded
+            ("0305APO", "abcdefgh"),       # no digits → excluded
+            ("0305APO", "59340121WSr"),   # valid
+        ]
         manifest, mva_list = parse_descriptions_to_manifest(descriptions, datetime(2026, 3, 5))
-        assert len(manifest) == 2
+        assert len(manifest) == 2   # only valid entries
         assert set(mva_list) == {"59340120", "59340121"}
 
     def test_special_characters(self):
@@ -257,7 +353,7 @@ class TestUT4_Sanitization:
         assert mva_list == []
 
     def test_invalid_suffix(self):
-        """'x' is not a valid suffix — should be rejected."""
+        """Lowercase 'x' is not a valid area code — MALFORMED_SCAN, excluded."""
         manifest, mva_list = parse_descriptions_to_manifest([("0305APO", "59340120x")], datetime(2026, 3, 5))
         assert manifest == {}
         assert mva_list == []
@@ -370,7 +466,8 @@ class TestUT6_NotificationPayload:
                     "VIN": "1HGCY1F44SA083453",
                     "Make": "HONDA ACCORD",
                     "Location": "APO",
-                    "Damage Type": "Replacement",
+                    "Action": "Replacement",
+                    "Area": "Windshield",
                     "Claim#": "Listed",
                     "WorkItem": "verified",
                 },
@@ -380,7 +477,8 @@ class TestUT6_NotificationPayload:
                     "VIN": "JN8BT3DDXTW297427",
                     "Make": "NISSAN ROGUE AWD",
                     "Location": "APO",
-                    "Damage Type": "Repair",
+                    "Action": "Repair",
+                    "Area": "Windshield",
                     "Claim#": "Missing",
                     "WorkItem": "verified",
                 },
@@ -452,6 +550,6 @@ class TestUT7_LocationExtraction:
     def test_manifest_uses_extracted_location(self):
         """parse_descriptions_to_manifest correctly extracts location from Type."""
         manifest, _ = parse_descriptions_to_manifest(
-            [("0305BB", "59340120")], datetime(2026, 3, 5)
+            [("0305BB", "59340120WS")], datetime(2026, 3, 5)
         )
         assert manifest["59340120"]["Location"] == "BB"
