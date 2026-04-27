@@ -28,7 +28,8 @@
     "BW":  "Back Window",
     "SR":  "Sunroof",
     "RLQ": "Rear Left Quarter",
-    "RRQ": "Rear Right Quarter"
+    "RRQ": "Rear Right Quarter",
+    "FRW": "Front Right Window"
   },
 
   "repair_eligible_areas_comment": "AREA_ID codes on which the repair flag (r) is valid. All other areas with an r flag are an INVALID_REPAIR error.",
