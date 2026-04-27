@@ -195,6 +195,16 @@ class TestUT1b_ScanErrorCodes:
         assert manifest["61066902"]["Claim#"] == "Missing"
         assert mva_list == ["61066902"]
 
+    def test_frw_area_label(self):
+        """59400084FRWc → Replacement, Front Right Window, Listed."""
+        manifest, mva_list = parse_descriptions_to_manifest(
+            [("0427APO", "59400084FRWc")], datetime(2026, 4, 27)
+        )
+        assert manifest["59400084"]["Action"] == "Replacement"
+        assert manifest["59400084"]["Area"] == "Front Right Window"
+        assert manifest["59400084"]["Claim#"] == "Listed"
+        assert mva_list == ["59400084"]
+
 
 # ─── UT-2: HTML Extraction ────────────────────────────────────────────────────
 
@@ -280,6 +290,29 @@ class TestUT2_HTMLExtraction:
         msg.attach(MIMEText("plain text fallback", "plain"))
         body = _extract_body(msg)
         assert "<table>" in body
+
+    def test_name_column_fallback_when_description_empty(self):
+        """When Description cells are empty, MVAs are read from the Name column."""
+        html = """
+        <table id="rowData">
+          <tr><th>Type</th><th>Name</th><th>Description</th></tr>
+          <tr><td>0427APO</td><td>56642073WSrc 60425330WSrc</td><td></td></tr>
+        </table>
+        """
+        result = _parse_html_descriptions(html)
+        assert ("0427APO", "56642073WSrc") in result
+        assert ("0427APO", "60425330WSrc") in result
+
+    def test_description_preferred_over_name(self):
+        """When Description has content it is preferred over Name."""
+        html = """
+        <table>
+          <tr><th>Type</th><th>Name</th><th>Description</th></tr>
+          <tr><td>0305APO</td><td>NameMVA</td><td>59340120WSc</td></tr>
+        </table>
+        """
+        result = _parse_html_descriptions(html)
+        assert result == [("0305APO", "59340120WSc")]
 
 
 # ─── UT-3: Idempotency Check ─────────────────────────────────────────────────

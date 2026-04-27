@@ -76,6 +76,7 @@ def _load_runtime_config(config_path: Path) -> dict:
             "SR":  "Sunroof",
             "RLQ": "Rear Left Quarter",
             "RRQ": "Rear Right Quarter",
+            "FRW": "Front Right Window",
         },
         "repair_eligible_areas": ["WS"],
         "vendor_labels": {
@@ -452,20 +453,24 @@ def _parse_html_descriptions_bs4(html: str) -> list[tuple[str, str]]:
     header_cells = [th.get_text(strip=True) for th in rows[0].find_all(["th", "td"])]
     desc_idx = _get_description_index_from_cells(header_cells)
     type_idx = _get_type_index_from_cells(header_cells)
-    if desc_idx is None:
+    name_idx = _get_name_index_from_cells(header_cells)
+    if desc_idx is None and name_idx is None:
         return []
 
     results: list[tuple[str, str]] = []
     for row in rows[1:]:
         cells = row.find_all("td")
-        if len(cells) <= desc_idx:
-            continue
         # Extract type_value from Type column (empty string if column missing)
         type_val = ""
         if type_idx is not None and len(cells) > type_idx:
             type_val = cells[type_idx].get_text(strip=True)
-        raw = cells[desc_idx].get_text(separator="\n", strip=False)
-        for desc in _split_non_empty_lines(raw):
+        # Prefer Description column; fall back to Name when Description is empty
+        tokens: list[str] = []
+        if desc_idx is not None and len(cells) > desc_idx:
+            tokens = _split_non_empty_lines(cells[desc_idx].get_text(separator="\n", strip=False))
+        if not tokens and name_idx is not None and len(cells) > name_idx:
+            tokens = cells[name_idx].get_text(strip=True).split()
+        for desc in tokens:
             results.append((type_val, desc))
     return results
 
@@ -484,7 +489,8 @@ def _parse_html_descriptions_regex(html: str) -> list[tuple[str, str]]:
 
     desc_idx = _get_description_index_from_cells(header_cells)
     type_idx = _get_type_index_from_cells(header_cells)
-    if desc_idx is None:
+    name_idx = _get_name_index_from_cells(header_cells)
+    if desc_idx is None and name_idx is None:
         return []
 
     results: list[tuple[str, str]] = []
@@ -496,13 +502,17 @@ def _parse_html_descriptions_regex(html: str) -> list[tuple[str, str]]:
             r"<td[^>]*>(.*?)</td>", row_html, re.DOTALL | re.IGNORECASE
         )
         normalized_cells = [re.sub(r"<[^>]+>", "", c).strip() for c in cells]
-        if len(normalized_cells) <= desc_idx or not normalized_cells[desc_idx]:
-            continue
         # Extract type_value from Type column (empty string if column missing)
         type_val = ""
         if type_idx is not None and len(normalized_cells) > type_idx:
             type_val = normalized_cells[type_idx]
-        for desc in _split_non_empty_lines(normalized_cells[desc_idx]):
+        # Prefer Description column; fall back to Name when Description is empty
+        tokens: list[str] = []
+        if desc_idx is not None and len(normalized_cells) > desc_idx and normalized_cells[desc_idx]:
+            tokens = _split_non_empty_lines(normalized_cells[desc_idx])
+        elif name_idx is not None and len(normalized_cells) > name_idx and normalized_cells[name_idx]:
+            tokens = normalized_cells[name_idx].split()
+        for desc in tokens:
             results.append((type_val, desc))
     return results
 
@@ -543,6 +553,13 @@ def _get_type_index_from_cells(cells: list[str]) -> int | None:
     if "Type" not in cells:
         return None
     return cells.index("Type")
+
+
+def _get_name_index_from_cells(cells: list[str]) -> int | None:
+    """Return Name column index if present in header cells."""
+    if "Name" not in cells:
+        return None
+    return cells.index("Name")
 
 
 def _extract_location_from_type(type_value: str | None) -> str:
