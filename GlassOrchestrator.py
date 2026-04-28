@@ -40,7 +40,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 CSV_PATH = DATA_DIR / "GlassDataParser.csv"
 RESULTS_PATH = BASE_DIR / "GlassResults.txt"
-WORKER_SCRIPT = BASE_DIR / "CGI" / "src" / "GlassDataParser.py"
+WORKER_SCRIPT = BASE_DIR / "src" / "GlassDataParser.py"
 
 # Google Sheets target
 SERVICE_ACCOUNT_JSON = BASE_DIR / "Service_account.json"
@@ -477,7 +477,7 @@ def run_worker_for_mvas(mva_list: list[str]) -> None:
     if not WORKER_SCRIPT.exists():
         raise FileNotFoundError(
             f"Worker script not found: {WORKER_SCRIPT}. "
-            "Ensure the CGI submodule is initialised: git submodule update --init"
+            "Restore the worker file or correct the WORKER_SCRIPT path."
         )
 
     log.info("Worker: Invoking worker subprocess — %s", WORKER_SCRIPT)
@@ -612,7 +612,7 @@ def persist_new_rows(df: pd.DataFrame) -> pd.DataFrame:
     rows_to_insert = _rows_from_dataframe(new_rows)
 
     # Insert rows above the summary section (pushes summary down automatically)
-    ws.insert_rows(rows_to_insert, row=insert_row)
+    ws.insert_rows(rows_to_insert, row=insert_row, inherit_from_before=True)
 
     log.info("Persistence: Wrote %d new rows to Google Sheet at row %d", len(new_rows), insert_row)
     return new_rows
