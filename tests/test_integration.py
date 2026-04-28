@@ -217,6 +217,7 @@ class TestIT4_SpreadsheetPersistence:
         assert len(new_rows) == 2
         ws.insert_rows.assert_called_once()
         written = ws.insert_rows.call_args[0][0]
+        assert ws.insert_rows.call_args.kwargs["inherit_from_before"] is True
         assert len(written) == 2
         assert written[0][1] == "59340120"
         assert written[1][1] == "59340121"
@@ -235,6 +236,7 @@ class TestIT4_SpreadsheetPersistence:
         assert len(new_rows) == 1
         ws.insert_rows.assert_called_once()
         written = ws.insert_rows.call_args[0][0]
+        assert ws.insert_rows.call_args.kwargs["inherit_from_before"] is True
         assert written[0][1] == "59340121"
 
     @patch("GlassOrchestrator._get_worksheet")
@@ -261,6 +263,7 @@ class TestIT4_SpreadsheetPersistence:
         persist_new_rows(df)
 
         written = ws.insert_rows.call_args[0][0]
+        assert ws.insert_rows.call_args.kwargs["inherit_from_before"] is True
         assert written[0] == ["03/05/2026", "59340120", "", "1HGCM82633A004352",
                                 "Windshield", "APO", "Replace(AGN)", "Windshield", "Missing", "verified"]
 
