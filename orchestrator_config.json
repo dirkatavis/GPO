@@ -13,7 +13,7 @@
   "smtp_port_comment": "SMTP port. Typically 587 for TLS or 465 for SSL.",
   "smtp_port": 587,
   
-  "mva_pattern_comment": "Regex to parse Orca Scan strings. Group 1: MVA (8 digits), Group 2: AREA_ID (uppercase letters), Group 3: repair flag (r or empty), Group 4: claim flag (c or empty). Do not change unless scan format changes.",
+  "mva_pattern_comment": "Fallback regex for Orca Scan parsing (compiled case-insensitively). When 'areas' is populated, the runtime parser derives AREA_ID alternation from those keys to avoid ambiguity; this pattern is used when 'areas' is empty. Groups: 1=MVA (8 digits), 2=AREA_ID, 3=repair flag (r or empty), 4=claim flag (c or empty).",
   "mva_pattern": "^(\\d{8})([A-Z]+?)([r]?)([c]?)$",
 
   "areas_comment": "Map of valid AREA_ID codes to human-readable labels. Used by the parser to validate and label the Area column.",
