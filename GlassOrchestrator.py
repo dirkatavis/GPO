@@ -149,12 +149,23 @@ def _resolve_config_path(path_value: str) -> Path:
 def _compile_regex_with_fallback(pattern_text: str, fallback_text: str) -> re.Pattern[str]:
     """Compile regex from config; fall back to a known-safe pattern on error."""
     try:
-        return re.compile(pattern_text)
+        return re.compile(pattern_text, re.IGNORECASE)
     except re.error as exc:
         logging.getLogger("GlassOrchestrator").warning(
             "Invalid regex in config (%s). Using fallback pattern.", exc
         )
-        return re.compile(fallback_text)
+        return re.compile(fallback_text, re.IGNORECASE)
+
+
+def _compile_scan_pattern(area_codes: list[str], fallback_text: str) -> re.Pattern[str]:
+    """Compile a scan regex that prefers known area codes over generic suffix parsing.
+
+    This avoids ambiguity for area codes ending with suffix letters, such as ``SR``.
+    """
+    if area_codes:
+        area_alternation = "|".join(sorted((re.escape(code) for code in area_codes), key=len, reverse=True))
+        return re.compile(rf"^(\d{{8}})({area_alternation})([r]?)([c]?)$", re.IGNORECASE)
+    return _compile_regex_with_fallback(fallback_text, fallback_text)
 
 
 RUNTIME_CONFIG = _load_runtime_config(ORCHESTRATOR_CONFIG_PATH)
@@ -192,11 +203,11 @@ else:
     ]
 
 TARGET_SENDER = str(RUNTIME_CONFIG["target_sender"])
-MVA_PATTERN = _compile_regex_with_fallback(
-    str(RUNTIME_CONFIG.get("mva_pattern", r"^(\d{8})([A-Z]+)([r]?)([c]?)$")),
-    r"^(\d{8})([A-Z]+)([r]?)([c]?)$",
-)
 AREAS: dict[str, str] = dict(RUNTIME_CONFIG.get("areas", {}))
+MVA_PATTERN = _compile_scan_pattern(
+    list(AREAS.keys()),
+    str(RUNTIME_CONFIG.get("mva_pattern", r"^(\d{8})([A-Z]+?)([r]?)([c]?)$")),
+)
 REPAIR_ELIGIBLE_AREAS: set[str] = set(RUNTIME_CONFIG.get("repair_eligible_areas", ["WS"]))
 VENDOR_LABELS: dict[str, str] = dict(RUNTIME_CONFIG.get("vendor_labels", {
     "Repair": "Repair(SuperGlass)",
@@ -630,9 +641,9 @@ def parse_descriptions_to_manifest(descriptions: list[tuple[str, str]], email_da
             continue
 
         mva = match.group(1)
-        area_code = match.group(2)
-        repair_flag = match.group(3)   # "r" or ""
-        claim_flag = match.group(4)    # "c" or ""
+        area_code = match.group(2).upper()
+        repair_flag = match.group(3).lower()   # "r" or ""
+        claim_flag = match.group(4).lower()    # "c" or ""
 
         # Validate area code against config
         if area_code not in AREAS:
@@ -706,6 +717,12 @@ def parse_glass_data_results(mva_list: list[str]) -> None:
         writer.writerow(["MVA"])
         for mva in mva_list:
             writer.writerow([mva])
+
+    if not WORKER_SCRIPT.exists():
+        raise FileNotFoundError(
+            f"Worker script not found: {WORKER_SCRIPT}. "
+            "Restore the worker file or correct the WORKER_SCRIPT path."
+        )
 
     log.info("Worker: Invoking worker subprocess — %s", WORKER_SCRIPT)
     subprocess.check_call(

@@ -14,7 +14,7 @@
   "smtp_port": 587,
   
   "mva_pattern_comment": "Regex to parse Orca Scan strings. Group 1: MVA (8 digits), Group 2: AREA_ID (uppercase letters), Group 3: repair flag (r or empty), Group 4: claim flag (c or empty). Do not change unless scan format changes.",
-  "mva_pattern": "^(\\d{8})([A-Z]+)([r]?)([c]?)$",
+  "mva_pattern": "^(\\d{8})([A-Z]+?)([r]?)([c]?)$",
 
   "areas_comment": "Map of valid AREA_ID codes to human-readable labels. Used by the parser to validate and label the Area column.",
   "areas": {

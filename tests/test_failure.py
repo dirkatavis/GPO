@@ -58,7 +58,7 @@ class TestFT1_WorkerCrashHandling:
         monkeypatch.setattr("GlassOrchestrator.CSV_PATH", tmp_path / "GlassDataParser.csv")
 
         # Mock input acquisition to return test data (bypass Gmail)
-        mock_descriptions = ["59340120", "59340121r"]
+        mock_descriptions = [("0305APO", "59340120WS"), ("0305APO", "59340121WSr")]
         mock_date = datetime(2026, 3, 5)
         monkeypatch.setattr(
             "GlassOrchestrator.fetch_input_descriptions",
@@ -89,6 +89,58 @@ class TestFT1_WorkerCrashHandling:
 
         assert not persist_called, "Persistence should NOT have been called after worker crash"
         assert not notify_called, "Notify should NOT have been called after worker crash"
+
+    def test_missing_worker_script_raises_file_not_found(self, tmp_path, monkeypatch):
+        """WORKER_SCRIPT path does not exist → FileNotFoundError raised before subprocess call."""
+        missing_script = tmp_path / "missing" / "GlassDataParser.py"
+        csv_path = tmp_path / "GlassDataParser.csv"
+
+        monkeypatch.setattr("GlassOrchestrator.WORKER_SCRIPT", missing_script)
+        monkeypatch.setattr("GlassOrchestrator.DATA_DIR", tmp_path)
+        monkeypatch.setattr("GlassOrchestrator.CSV_PATH", csv_path)
+
+        with pytest.raises(FileNotFoundError) as exc_info:
+            parse_glass_data_results(["59340120", "59340121"])
+
+        assert csv_path.exists()
+        assert csv_path.read_text(encoding="utf-8").splitlines() == [
+            "MVA",
+            "59340120",
+            "59340121",
+        ]
+        assert "correct the WORKER_SCRIPT path" in str(exc_info.value)
+
+    def test_full_pipeline_aborts_when_worker_script_missing(self, tmp_path, monkeypatch):
+        """Full pipeline: missing WORKER_SCRIPT → abort before persist/notify."""
+        missing_script = tmp_path / "missing" / "GlassDataParser.py"
+
+        monkeypatch.setattr("GlassOrchestrator.WORKER_SCRIPT", missing_script)
+        monkeypatch.setattr("GlassOrchestrator.DATA_DIR", tmp_path)
+        monkeypatch.setattr("GlassOrchestrator.CSV_PATH", tmp_path / "GlassDataParser.csv")
+        monkeypatch.setattr(
+            "GlassOrchestrator.fetch_input_descriptions",
+            lambda: ([("0305APO", "59340120WS")], datetime(2026, 3, 5)),
+        )
+
+        persist_called = False
+        notify_called = False
+
+        def spy_persist(df):
+            nonlocal persist_called
+            persist_called = True
+            return df
+
+        def spy_notify(df):
+            nonlocal notify_called
+            notify_called = True
+
+        monkeypatch.setattr("GlassOrchestrator.persist_new_rows", spy_persist)
+        monkeypatch.setattr("GlassOrchestrator.notify_order_items", spy_notify)
+
+        run_pipeline()
+
+        assert not persist_called
+        assert not notify_called
 
 
 # ─── FT-2: Stale Results Protection ──────────────────────────────────────────
@@ -139,7 +191,7 @@ class TestFT2_StaleResultsProtection:
         monkeypatch.setattr("GlassOrchestrator.DATA_DIR", tmp_path)
         monkeypatch.setattr("GlassOrchestrator.CSV_PATH", tmp_path / "GlassDataParser.csv")
 
-        mock_descriptions = ["59340120"]
+        mock_descriptions = [("0305APO", "59340120WS")]
         mock_date = datetime(2026, 3, 5)
         monkeypatch.setattr(
             "GlassOrchestrator.fetch_input_descriptions",
@@ -200,7 +252,7 @@ class TestFT3_NotificationConsistency:
 
         monkeypatch.setattr(
             "GlassOrchestrator.fetch_input_descriptions",
-            lambda: (["59654641", "01712003"], email_date),
+            lambda: ([("0309APO", "59654641WS"), ("0309APO", "01712003WS")], email_date),
         )
         monkeypatch.setattr(
             "GlassOrchestrator.parse_descriptions_to_manifest",
