@@ -157,15 +157,29 @@ def _compile_regex_with_fallback(pattern_text: str, fallback_text: str) -> re.Pa
         return re.compile(fallback_text, re.IGNORECASE)
 
 
-def _compile_scan_pattern(area_codes: list[str], fallback_text: str) -> re.Pattern[str]:
-    """Compile a scan regex that prefers known area codes over generic suffix parsing.
+def _compile_scan_pattern(
+    area_codes: list[str],
+    configured_pattern_text: str,
+    safe_fallback_text: str,
+) -> re.Pattern[str]:
+    """Compile the scan regex with clear precedence and safe fallback.
 
-    This avoids ambiguity for area codes ending with suffix letters, such as ``SR``.
+    Precedence:
+      1) If ``areas`` is configured, build a pattern from known area codes.
+      2) Otherwise, use the configured ``mva_pattern`` text.
+      3) Fall back to a built-in known-safe default pattern.
+
+    Using area-code alternation avoids ambiguity for codes ending with suffix
+    letters (e.g. ``SR``).
     """
     if area_codes:
-        area_alternation = "|".join(sorted((re.escape(code) for code in area_codes), key=len, reverse=True))
-        return re.compile(rf"^(\d{{8}})({area_alternation})([r]?)([c]?)$", re.IGNORECASE)
-    return _compile_regex_with_fallback(fallback_text, fallback_text)
+        area_alternation = "|".join(
+            sorted((re.escape(code) for code in area_codes), key=len, reverse=True)
+        )
+        generated_pattern = rf"^(\d{{8}})({area_alternation})([r]?)([c]?)$"
+        return _compile_regex_with_fallback(generated_pattern, safe_fallback_text)
+
+    return _compile_regex_with_fallback(configured_pattern_text, safe_fallback_text)
 
 
 RUNTIME_CONFIG = _load_runtime_config(ORCHESTRATOR_CONFIG_PATH)
@@ -204,9 +218,11 @@ else:
 
 TARGET_SENDER = str(RUNTIME_CONFIG["target_sender"])
 AREAS: dict[str, str] = dict(RUNTIME_CONFIG.get("areas", {}))
+DEFAULT_MVA_PATTERN = r"^(\d{8})([A-Z]+?)([r]?)([c]?)$"
 MVA_PATTERN = _compile_scan_pattern(
     list(AREAS.keys()),
-    str(RUNTIME_CONFIG.get("mva_pattern", r"^(\d{8})([A-Z]+?)([r]?)([c]?)$")),
+    str(RUNTIME_CONFIG.get("mva_pattern", DEFAULT_MVA_PATTERN)),
+    DEFAULT_MVA_PATTERN,
 )
 REPAIR_ELIGIBLE_AREAS: set[str] = set(RUNTIME_CONFIG.get("repair_eligible_areas", ["WS"]))
 VENDOR_LABELS: dict[str, str] = dict(RUNTIME_CONFIG.get("vendor_labels", {
