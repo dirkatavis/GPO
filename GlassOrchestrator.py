@@ -10,6 +10,7 @@ Pipeline steps:
 """
 
 import csv
+import dataclasses
 import email
 import imaplib
 import json
@@ -19,20 +20,13 @@ import re
 import smtplib
 import subprocess
 import sys
-from dataclasses import dataclass
 from datetime import datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from email.utils import getaddresses
 from pathlib import Path
-from typing import Any
 
-try:
-    import gspread  # pylint: disable=import-error  # pyright: ignore[reportMissingImports]
-except ModuleNotFoundError:
-    gspread = None  # type: ignore[assignment]
+import gspread
 import pandas as pd
-from cycle_tracker import CycleTracker
 
 try:
     from bs4 import BeautifulSoup
@@ -46,167 +40,69 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 CSV_PATH = DATA_DIR / "GlassDataParser.csv"
 RESULTS_PATH = BASE_DIR / "GlassResults.txt"
-WORKER_SCRIPT = BASE_DIR / "src" / "GlassDataParser.py"
-
-ORCHESTRATOR_CONFIG_PATH = BASE_DIR / "orchestrator_config.json"
-ORCHESTRATOR_PROJECT_CONFIG_PATH = BASE_DIR / "orchestrator_project.json"
-ORCHESTRATOR_PROJECT_LOCAL_CONFIG_PATH = BASE_DIR / "orchestrator_project.local.json"
-ORCHESTRATOR_LOCAL_CONFIG_PATH = BASE_DIR / "orchestrator_config.local.json"
-SHARED_LOCAL_CONFIG_PATH = BASE_DIR / "config" / "config.local.json"
-
-
-def _load_runtime_config(config_path: Path) -> dict:
-    """Load runtime configuration from JSON with sane defaults."""
-    defaults = {
-        "sheet_name": "GlassClaims",
-        "imap_server": "imap.gmail.com",
-        "smtp_server": "smtp.gmail.com",
-        "smtp_port": 587,
-        "target_sender": "export@orcascan.com",
-        "mva_pattern": r"^(\d{8})([A-Z]+)([r]?)([c]?)$",
-        "areas": {
-            "WS":  "Windshield",
-            "FLD": "Front Left Door",
-            "FRD": "Front Right Door",
-            "RLD": "Rear Left Door",
-            "RRD": "Rear Right Door",
-            "FLV": "Front Left Vent",
-            "FRV": "Front Right Vent",
-            "BW":  "Back Window",
-            "SR":  "Sunroof",
-            "RLQ": "Rear Left Quarter",
-            "RRQ": "Rear Right Quarter",
-            "FRW": "Front Right Window",
-        },
-        "repair_eligible_areas": ["WS"],
-        "vendor_labels": {
-            "Repair":      "Repair(SuperGlass)",
-            "Replacement": "Replace(AGN)",
-        },
-        "cycle_tracker_store": "data/mva_cycle_tracker.json",
-        "cycle_gap_grace_days": 1,
-        "cycle_completed_retention": 1000,
-        "location": "APO",
-        "columns": [
-            "Arrival Date",
-            "MVA",
-            "FPO#",
-            "VIN",
-            "Make",
-            "Location",
-            "Action",
-            "Area",
-            "Claim#",
-            "WorkItem",
-        ],
-        "notify_recipients": [],
-    }
-
-    if not config_path.exists():
-        return defaults
-
-    try:
-        with open(config_path, "r", encoding="utf-8") as f:
-            loaded = json.load(f)
-        if not isinstance(loaded, dict):
-            return defaults
-        merged = defaults.copy()
-        merged.update(loaded)
-        return merged
-    except (OSError, json.JSONDecodeError) as exc:
-        logging.getLogger("GlassOrchestrator").warning(
-            "Config load failed for %s; using defaults (%s)", config_path, exc
-        )
-        return defaults
-
-
-def _load_local_config_overrides(config_path: Path) -> dict:
-    """Load optional local JSON overrides for machine-specific configuration."""
-    if not config_path.exists():
-        return {}
-
-    try:
-        with open(config_path, "r", encoding="utf-8") as f:
-            loaded = json.load(f)
-        if not isinstance(loaded, dict):
-            return {}
-        return loaded
-    except (OSError, json.JSONDecodeError) as exc:
-        logging.getLogger("GlassOrchestrator").warning(
-            "Local config override load failed for %s; ignoring (%s)", config_path, exc
-        )
-        return {}
-
-
-def _resolve_config_path(path_value: str) -> Path:
-    """Resolve relative config paths from BASE_DIR and keep absolute paths intact."""
-    path = Path(path_value)
-    if path.is_absolute():
-        return path
-    return BASE_DIR / path
-
-
-def _compile_regex_with_fallback(pattern_text: str, fallback_text: str) -> re.Pattern[str]:
-    """Compile regex from config; fall back to a known-safe pattern on error."""
-    try:
-        return re.compile(pattern_text)
-    except re.error as exc:
-        logging.getLogger("GlassOrchestrator").warning(
-            "Invalid regex in config (%s). Using fallback pattern.", exc
-        )
-        return re.compile(fallback_text)
-
-
-RUNTIME_CONFIG = _load_runtime_config(ORCHESTRATOR_CONFIG_PATH)
-RUNTIME_CONFIG.update(_load_runtime_config(ORCHESTRATOR_PROJECT_CONFIG_PATH))
-RUNTIME_CONFIG.update(_load_local_config_overrides(ORCHESTRATOR_PROJECT_LOCAL_CONFIG_PATH))
-
-# Legacy local overrides kept for backward compatibility.
-RUNTIME_CONFIG.update(_load_local_config_overrides(ORCHESTRATOR_LOCAL_CONFIG_PATH))
-
-# Shared local overrides can still be used for cross-module machine settings.
-RUNTIME_CONFIG.update(_load_local_config_overrides(SHARED_LOCAL_CONFIG_PATH))
+WORKER_SCRIPT = BASE_DIR / "CGI" / "src" / "GlassDataParser.py"
 
 # Google Sheets target
-SERVICE_ACCOUNT_JSON = _resolve_config_path(str(RUNTIME_CONFIG["service_account_json"]))
-SPREADSHEET_ID = os.getenv("GLASS_SPREADSHEET_ID", str(RUNTIME_CONFIG["spreadsheet_id"]))
-SHEET_NAME = str(RUNTIME_CONFIG["sheet_name"])
+SERVICE_ACCOUNT_JSON = BASE_DIR / "Service_account.json"
+SPREADSHEET_ID = "1eltlDO-nt-rBicbz_h3CmPc4g0TJNR9wFcsAw2ngNvs"
+SHEET_NAME = "GlassClaims"
 
-# Gmail/SMTP infrastructure endpoints
-IMAP_SERVER = str(RUNTIME_CONFIG["imap_server"])
-SMTP_SERVER = str(RUNTIME_CONFIG["smtp_server"])
-SMTP_PORT = int(RUNTIME_CONFIG["smtp_port"])
+# Gmail credentials — set via environment variables
+IMAP_SERVER = "imap.gmail.com"
+SMTP_SERVER = "smtp.gmail.com"
+SMTP_PORT = 587
+EMAIL_ACCOUNT = os.getenv("GLASS_EMAIL_ACCOUNT", "")
+EMAIL_PASSWORD = os.getenv("GLASS_EMAIL_PASSWORD", "")  # App password recommended
+SENDER_ADDRESS = os.getenv("GLASS_SENDER", "")
 
-# Gmail credentials — env vars take priority; fall back to orchestrator_config values
-EMAIL_ACCOUNT = os.getenv("GLASS_EMAIL_ACCOUNT") or str(RUNTIME_CONFIG.get("email_account", ""))
-EMAIL_PASSWORD = os.getenv("GLASS_EMAIL_PASSWORD") or str(RUNTIME_CONFIG.get("email_password", ""))
-SENDER_ADDRESS = os.getenv("GLASS_SENDER") or str(RUNTIME_CONFIG.get("sender_address", ""))
+#These should be maintained via a ini or config file for easy modifications
+NOTIFY_RECIPIENTS = os.getenv("GLASS_NOTIFY_RECIPIENTS", "").split(",")
+TARGET_SENDER = "export@orcascan.com"
+# Scan format: <MVA:8digits><AREA_ID:letters>[r][c]  (case-insensitive from scanner)
+# Non-greedy area group so trailing 'r'/'c' flags are captured in their own groups.
+MVA_PATTERN = re.compile(r"^(\d{8})([A-Za-z]+?)([r]?)([c]?)$")
+LOCATION = "APO"   # default fallback when type column has no recognisable suffix
 
-# Runtime business/config values
-notify_recipients_env = os.getenv("GLASS_NOTIFY_RECIPIENTS", "").strip()
-if notify_recipients_env:
-    NOTIFY_RECIPIENTS = [x.strip() for x in notify_recipients_env.split(",") if x.strip()]
-else:
-    NOTIFY_RECIPIENTS = [
-        x.strip() for x in RUNTIME_CONFIG.get("notify_recipients", []) if isinstance(x, str) and x.strip()
-    ]
+AREAS: dict[str, str] = {
+    "WS":  "Windshield",
+    "FLD": "Front Left Door",
+    "FRD": "Front Right Door",
+    "RLD": "Rear Left Door",
+    "RRD": "Rear Right Door",
+    "FLV": "Front Left Vent",
+    "FRV": "Front Right Vent",
+    "BW":  "Back Window",
+    "SR":  "Sunroof",
+    "RLQ": "Rear Left Quarter",
+    "RRQ": "Rear Right Quarter",
+    "FRW": "Front Right Window",
+}
+REPAIR_ELIGIBLE: set[str] = {"WS"}
+KNOWN_LOCATIONS: set[str] = {"APO", "BB"}
 
-TARGET_SENDER = str(RUNTIME_CONFIG["target_sender"])
-MVA_PATTERN = _compile_regex_with_fallback(
-    str(RUNTIME_CONFIG.get("mva_pattern", r"^(\d{8})([A-Z]+)([r]?)([c]?)$")),
-    r"^(\d{8})([A-Z]+)([r]?)([c]?)$",
-)
-AREAS: dict[str, str] = dict(RUNTIME_CONFIG.get("areas", {}))
-REPAIR_ELIGIBLE_AREAS: set[str] = set(RUNTIME_CONFIG.get("repair_eligible_areas", ["WS"]))
-VENDOR_LABELS: dict[str, str] = dict(RUNTIME_CONFIG.get("vendor_labels", {
+VENDOR_LABELS: dict[str, str] = {
     "Repair": "Repair(SuperGlass)",
     "Replacement": "Replace(AGN)",
-}))
-LOCATION = str(RUNTIME_CONFIG["location"])
-COLUMNS = list(RUNTIME_CONFIG["columns"])
-CYCLE_TRACKER_STORE = _resolve_config_path(str(RUNTIME_CONFIG.get("cycle_tracker_store", "data/mva_cycle_tracker.json")))
-CYCLE_GAP_GRACE_DAYS = int(RUNTIME_CONFIG.get("cycle_gap_grace_days", 1))
-CYCLE_COMPLETED_RETENTION = int(RUNTIME_CONFIG.get("cycle_completed_retention", 1000))
+}
+
+COLUMNS = [
+    "Arrival Date",
+    "MVA",
+    "FPO#",
+    "VIN",
+    "Make",
+    "Location",
+    "Action",
+    "Area",
+    "Claim#",
+    "WorkItem",
+]
+
+
+@dataclasses.dataclass
+class EmailMessage:
+    subject: str
+    html_body: str
 
 
 # The phase terminalogy should be seen as a design process but not an archetetual method
@@ -223,54 +119,41 @@ logging.basicConfig(
 log = logging.getLogger("GlassOrchestrator")
 
 
-@dataclass(frozen=True)
-class InboundEmail:
-    """Normalized inbound email data extracted from a MIME message."""
-    from_address: str
-    to_addresses: list[str]
-    subject: str
-    sent_at: datetime
-    body_text: str
-    body_html: str
+# ─── Config Loaders ───────────────────────────────────────────────────────────
 
-    @property
-    def best_body(self) -> str:
-        """Prefer HTML body when it contains tabular data, otherwise use plain text."""
-        if self.body_html and "<table" in self.body_html.lower():
-            return self.body_html
-        return self.body_text or self.body_html
-
-    @classmethod
-    def from_message(cls, msg: email.message.Message) -> "InboundEmail":
-        """Build a parsed email object from a MIME message."""
-        body_text, body_html = _extract_message_bodies(msg)
-        from_addresses = _extract_header_addresses(msg.get_all("From", []))
-        to_addresses = _extract_header_addresses(msg.get_all("To", []))
-        return cls(
-            from_address=from_addresses[0] if from_addresses else "",
-            to_addresses=to_addresses,
-            subject=msg.get("Subject", ""),
-            sent_at=_parse_email_datetime(msg.get("Date", "")),
-            body_text=body_text,
-            body_html=body_html,
-        )
+def _load_runtime_config(path: Path) -> dict:
+    """Load the base runtime config JSON.  Returns {} on missing or invalid file."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except FileNotFoundError:
+        return {}
+    except Exception as exc:
+        log.warning("Runtime config load failed — %s", exc)
+        return {}
 
 
-@dataclass(frozen=True)
-class OutboundEmail:
-    """Normalized outbound email payload used for SMTP delivery."""
-    subject: str
-    html_body: str
-    sender: str
-    recipients: list[str]
+def _load_local_config_overrides(path: Path) -> dict:
+    """Load an optional local-override JSON.  Returns {} on missing or invalid file."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except FileNotFoundError:
+        return {}
+    except Exception as exc:
+        log.warning("Local config override load failed — %s", exc)
+        return {}
+
 
 # ─── Input Acquisition ────────────────────────────────────────────────────────
 
-def fetch_input_descriptions() -> tuple[list[tuple[str, str]], datetime]:
+def fetch_input_descriptions() -> tuple[list[str], datetime]:
     """
     Connect to Gmail via IMAP, fetch the latest UNSEEN email from the
     target sender, and extract:
-      - A list of (type_value, description) tuples from the email table
+      - A list of raw 'Description' strings (one per line in the body/CSV)
       - The Date header parsed as a datetime object
     """
     log.info("Input acquisition: Connecting to Gmail IMAP …")
@@ -289,7 +172,7 @@ def fetch_input_descriptions() -> tuple[list[tuple[str, str]], datetime]:
     finally:
         try:
             mail.logout()
-        except (imaplib.IMAP4.error, OSError):
+        except Exception:
             pass
 
 
@@ -322,41 +205,28 @@ def _fetch_message_by_id(mail: imaplib.IMAP4_SSL, message_id: bytes) -> email.me
     return email.message_from_bytes(raw_email)
 
 
-def _extract_descriptions_from_message(msg: email.message.Message) -> tuple[list[tuple[str, str]], datetime]:
-    """Extract parsed (type_value, description) tuples and parsed email datetime from a MIME message."""
-    return _extract_descriptions_from_email(InboundEmail.from_message(msg))
+def _extract_descriptions_from_message(msg: email.message.Message) -> tuple[list[str], datetime]:
+    """Extract parsed descriptions and parsed email datetime from a MIME message."""
+    date_str = msg.get("Date", "")
+    email_date = email.utils.parsedate_to_datetime(date_str) if date_str else datetime.now()
+    log.info("Input: Email date = %s", email_date.isoformat())
 
-
-def _extract_descriptions_from_email(parsed_email: InboundEmail) -> tuple[list[tuple[str, str]], datetime]:
-    """Extract parsed (type_value, description) tuples and email datetime from normalized email data."""
-    log.info("Input: Email date = %s", parsed_email.sent_at.isoformat())
-
-    body = parsed_email.best_body
+    body = _extract_body(msg)
     if "<table" in body.lower():
         descriptions = _parse_html_descriptions(body)
     else:
         descriptions = _parse_descriptions(body)
     log.info("Input: Extracted %d description lines", len(descriptions))
-    return descriptions, parsed_email.sent_at
+    return descriptions, email_date
 
+def _extract_body(msg: email.message.Message) -> str:
+    """Walk a MIME message and return the best body for parsing.
 
-def _parse_email_datetime(date_str: str) -> datetime:
-    """Parse email Date header into datetime, falling back to current time."""
-    if not date_str:
-        return datetime.now()
-    try:
-        return email.utils.parsedate_to_datetime(date_str)
-    except (TypeError, ValueError):
-        return datetime.now()
-
-
-def _extract_header_addresses(header_values: list[str]) -> list[str]:
-    """Extract email addresses from RFC822 header values."""
-    return [addr for _, addr in getaddresses(header_values) if addr]
-
-
-def _extract_message_bodies(msg: email.message.Message) -> tuple[str, str]:
-    """Extract plain and html bodies from a MIME message."""
+    Orca Scan emails contain an HTML table with structured data and a
+    plain-text CSV attachment.  We prefer the HTML when it contains a
+    <table> because the CSV embeds newlines inside quoted fields which
+    break simple line-by-line parsing.
+    """
     plain = ""
     html = ""
     if msg.is_multipart():
@@ -379,29 +249,16 @@ def _extract_message_bodies(msg: email.message.Message) -> tuple[str, str]:
                 html = decoded
             else:
                 plain = decoded
-    return plain, html
-
-def _extract_body(msg: email.message.Message) -> str:
-    """Walk a MIME message and return the best body for parsing.
-
-    Orca Scan emails contain an HTML table with structured data and a
-    plain-text CSV attachment.  We prefer the HTML when it contains a
-    <table> because the CSV embeds newlines inside quoted fields which
-    break simple line-by-line parsing.
-    """
-    body_text, body_html = _extract_message_bodies(msg)
-    if body_html and "<table" in body_html.lower():
-        return body_html
-    return body_text or body_html
+    # Prefer HTML when it contains a data table (Orca Scan format)
+    if html and "<table" in html.lower():
+        return html
+    return plain or html
 
 
 def _parse_descriptions(body: str) -> list[tuple[str, str]]:
     """
-    Parse the email body as CSV or line-delimited text and return
-    (type_value, description) tuples.
-
-    For CSV with Type and Description columns, extracts both.
-    For plain text fallback, returns empty type_value.
+    Parse the email body as CSV or line-delimited text.
+    Returns (type, scan) tuples; plain-text has no Type column so type is empty.
     """
     lines = body.strip().splitlines()
     if not lines:
@@ -410,288 +267,198 @@ def _parse_descriptions(body: str) -> list[tuple[str, str]]:
     # Try CSV with a 'Description' header first
     reader = csv.DictReader(lines)
     if reader.fieldnames and "Description" in reader.fieldnames:
-        has_type = "Type" in reader.fieldnames
-        results: list[tuple[str, str]] = []
-        for row in reader:
-            desc = row.get("Description", "").strip()
-            if desc:
-                type_val = row.get("Type", "").strip() if has_type else ""
-                results.append((type_val, desc))
-        return results
+        return [
+            (row.get("Type", "").strip(), row["Description"].strip())
+            for row in reader
+            if row.get("Description", "").strip()
+        ]
 
-    # Fallback: treat each non-empty line as a description (no type_value)
+    # Fallback: treat each non-empty line as a description with no type
     return [("", line.strip()) for line in lines if line.strip()]
+
+
+def _extract_location_from_type(type_val: str | None, default: str = LOCATION) -> str:
+    """Extract the location suffix from the Orca Scan Type column value.
+
+    The Type column is formatted as MMDDLOC (e.g., '0420APO').  The first four
+    characters are a date stamp; everything after is the location code.
+    Unknown or missing suffixes fall back to *default*.
+    """
+    if not type_val:
+        return default
+    stripped = type_val.strip()
+    if len(stripped) <= 4:
+        return default
+    suffix = stripped[4:].upper()
+    return suffix if suffix in KNOWN_LOCATIONS else default
 
 
 def _parse_html_descriptions(html: str) -> list[tuple[str, str]]:
     """
-    Extract 'Type' and 'Description' column values from an HTML table (Orca Scan email).
-    Uses BeautifulSoup if available, otherwise falls back to regex.
+    Extract (type, scan) pairs from an HTML table (Orca Scan email).
 
-    Returns:
-        List of (type_value, description) tuples. Each Description cell may contain
-        multiple MVA codes (newline-separated), so one row can produce multiple tuples
-        sharing the same type_value.
+    Returns a list of (type_value, scan_string) tuples where type_value is the
+    raw Type column entry (e.g., '0420APO') and scan_string is the MVA scan
+    (e.g., '59193750WSrc').  Uses BeautifulSoup when available.
     """
     if HAS_BS4:
-        return _parse_html_descriptions_bs4(html)
-
-    return _parse_html_descriptions_regex(html)
-
-
-def _parse_html_descriptions_bs4(html: str) -> list[tuple[str, str]]:
-    """Parse Type and Description values from Orca Scan HTML using BeautifulSoup."""
-    soup = BeautifulSoup(html, "html.parser")
-    table = _find_primary_table_bs4(soup)
-    if not table:
-        return []
-
-    rows = table.find_all("tr")
-    if not rows:
-        return []
-
-    header_cells = [th.get_text(strip=True) for th in rows[0].find_all(["th", "td"])]
-    desc_idx = _get_description_index_from_cells(header_cells)
-    type_idx = _get_type_index_from_cells(header_cells)
-    name_idx = _get_name_index_from_cells(header_cells)
-    if desc_idx is None and name_idx is None:
-        return []
-
-    results: list[tuple[str, str]] = []
-    for row in rows[1:]:
-        cells = row.find_all("td")
-        # Extract type_value from Type column (empty string if column missing)
-        type_val = ""
-        if type_idx is not None and len(cells) > type_idx:
-            type_val = cells[type_idx].get_text(strip=True)
-        # Prefer Description column; fall back to Name when Description is empty
-        tokens: list[str] = []
-        if desc_idx is not None and len(cells) > desc_idx:
-            tokens = _split_non_empty_lines(cells[desc_idx].get_text(separator="\n", strip=False))
-        if not tokens and name_idx is not None and len(cells) > name_idx:
-            tokens = cells[name_idx].get_text(strip=True).split()
-        for desc in tokens:
-            results.append((type_val, desc))
-    return results
-
-
-def _find_primary_table_bs4(soup: Any) -> Any | None:
-    """Prefer rowData table and fall back to first table."""
-    return soup.find("table", id="rowData") or soup.find("table")
-
-
-def _parse_html_descriptions_regex(html: str) -> list[tuple[str, str]]:
-    """Parse Type and Description values from Orca Scan HTML using regex fallback."""
-    search_html = _row_data_extractor(html)
-    header_cells = _extract_header_cells_regex(search_html)
-    if not header_cells:
-        return []
-
-    desc_idx = _get_description_index_from_cells(header_cells)
-    type_idx = _get_type_index_from_cells(header_cells)
-    name_idx = _get_name_index_from_cells(header_cells)
-    if desc_idx is None and name_idx is None:
-        return []
-
-    results: list[tuple[str, str]] = []
-    all_rows = re.findall(
-        r"<tr[^>]*>(.*?)</tr>", search_html, re.DOTALL | re.IGNORECASE
-    )
-    for row_html in all_rows[1:]:  # skip header
-        cells = re.findall(
-            r"<td[^>]*>(.*?)</td>", row_html, re.DOTALL | re.IGNORECASE
+        soup = BeautifulSoup(html, "html.parser")
+        table = soup.find("table", id="rowData") or soup.find("table")
+        if not table:
+            return []
+        rows = table.find_all("tr")
+        if not rows:
+            return []
+        headers = [th.get_text(strip=True) for th in rows[0].find_all(["th", "td"])]
+        type_idx = headers.index("Type") if "Type" in headers else None
+        desc_idx = headers.index("Description") if "Description" in headers else None
+        name_idx = headers.index("Name") if "Name" in headers else None
+        if desc_idx is None and name_idx is None:
+            return []
+        results: list[tuple[str, str]] = []
+        for row in rows[1:]:
+            cells = row.find_all("td")
+            type_val = cells[type_idx].get_text(strip=True) if type_idx is not None and len(cells) > type_idx else ""
+            # Prefer Description; fall back to Name when Description is empty
+            scan_raw = ""
+            use_name = False
+            if desc_idx is not None and len(cells) > desc_idx:
+                scan_raw = cells[desc_idx].get_text(separator="\n", strip=False)
+            if not scan_raw.strip() and name_idx is not None and len(cells) > name_idx:
+                scan_raw = cells[name_idx].get_text(separator="\n", strip=False)
+                use_name = True
+            if use_name:
+                # Name column packs multiple scans space-separated on a single line
+                for token in scan_raw.split():
+                    token = token.strip()
+                    if token:
+                        results.append((type_val, token))
+            else:
+                for line in scan_raw.splitlines():
+                    line = line.strip()
+                    if line:
+                        results.append((type_val, line))
+        return results
+    else:
+        table_match = re.search(
+            r'<table[^>]*id=["\']rowData["\'][^>]*>(.*?)</table>',
+            html, re.DOTALL | re.IGNORECASE,
         )
-        normalized_cells = [re.sub(r"<[^>]+>", "", c).strip() for c in cells]
-        # Extract type_value from Type column (empty string if column missing)
-        type_val = ""
-        if type_idx is not None and len(normalized_cells) > type_idx:
-            type_val = normalized_cells[type_idx]
-        # Prefer Description column; fall back to Name when Description is empty
-        tokens: list[str] = []
-        if desc_idx is not None and len(normalized_cells) > desc_idx and normalized_cells[desc_idx]:
-            tokens = _split_non_empty_lines(normalized_cells[desc_idx])
-        elif name_idx is not None and len(normalized_cells) > name_idx and normalized_cells[name_idx]:
-            tokens = normalized_cells[name_idx].split()
-        for desc in tokens:
-            results.append((type_val, desc))
-    return results
-
-
-def _row_data_extractor(html: str) -> str:
-    """Return rowData table HTML body when present; otherwise return full HTML."""
-    table_match = re.search(
-        r'<table[^>]*id=["\']rowData["\'][^>]*>(.*?)</table>',
-        html,
-        re.DOTALL | re.IGNORECASE,
-    )
-    return table_match.group(1) if table_match else html
-
-
-def _extract_header_cells_regex(search_html: str) -> list[str]:
-    """Extract normalized header cell texts from first row using regex."""
-    header_match = re.search(
-        r"<tr[^>]*>(.*?)</tr>", search_html, re.DOTALL | re.IGNORECASE
-    )
-    if not header_match:
-        return []
-
-    header_cells = re.findall(
-        r"<t[hd][^>]*>(.*?)</t[hd]>", header_match.group(1), re.DOTALL | re.IGNORECASE
-    )
-    return [re.sub(r"<[^>]+>", "", c).strip() for c in header_cells]
-
-
-def _get_description_index_from_cells(cells: list[str]) -> int | None:
-    """Return Description column index if present in header cells."""
-    if "Description" not in cells:
-        return None
-    return cells.index("Description")
-
-
-def _get_type_index_from_cells(cells: list[str]) -> int | None:
-    """Return Type column index if present in header cells."""
-    if "Type" not in cells:
-        return None
-    return cells.index("Type")
-
-
-def _get_name_index_from_cells(cells: list[str]) -> int | None:
-    """Return Name column index if present in header cells."""
-    if "Name" not in cells:
-        return None
-    return cells.index("Name")
-
-
-def _extract_location_from_type(type_value: str | None) -> str:
-    """
-    Extract location suffix (APO or BB) from Type column value.
-    
-    Format: MMDD + location suffix (e.g., '0420APO' → 'APO', '0420BB' → 'BB')
-    Returns the configured LOCATION default if extraction fails.
-    """
-    if not type_value:
-        return LOCATION
-    # Extract suffix after 4-digit date prefix
-    type_value = type_value.strip()
-    if len(type_value) > 4:
-        suffix = type_value[4:].upper()
-        if suffix in ("APO", "BB"):
-            return suffix
-    return LOCATION
-
-
-def _split_non_empty_lines(raw_text: str) -> list[str]:
-    """Split text by lines and return only non-empty trimmed lines."""
-    return [line.strip() for line in raw_text.splitlines() if line.strip()]
+        search_html = table_match.group(1) if table_match else html
+        header_match = re.search(
+            r"<tr[^>]*>(.*?)</tr>", search_html, re.DOTALL | re.IGNORECASE
+        )
+        if not header_match:
+            return []
+        header_cells = re.findall(
+            r"<t[hd][^>]*>(.*?)</t[hd]>", header_match.group(1), re.DOTALL | re.IGNORECASE
+        )
+        header_cells = [re.sub(r"<[^>]+>", "", c).strip() for c in header_cells]
+        type_idx = header_cells.index("Type") if "Type" in header_cells else None
+        desc_idx = header_cells.index("Description") if "Description" in header_cells else None
+        name_idx = header_cells.index("Name") if "Name" in header_cells else None
+        if desc_idx is None and name_idx is None:
+            return []
+        all_rows = re.findall(
+            r"<tr[^>]*>(.*?)</tr>", search_html, re.DOTALL | re.IGNORECASE
+        )
+        results: list[tuple[str, str]] = []
+        for row_html in all_rows[1:]:
+            cells = re.findall(
+                r"<td[^>]*>(.*?)</td>", row_html, re.DOTALL | re.IGNORECASE
+            )
+            cells = [re.sub(r"<[^>]+>", "", c).strip() for c in cells]
+            type_val = cells[type_idx] if type_idx is not None and len(cells) > type_idx else ""
+            scan_raw = ""
+            use_name = False
+            if desc_idx is not None and len(cells) > desc_idx:
+                scan_raw = cells[desc_idx]
+            if not scan_raw.strip() and name_idx is not None and len(cells) > name_idx:
+                scan_raw = cells[name_idx]
+                use_name = True
+            if use_name:
+                for token in scan_raw.split():
+                    token = token.strip()
+                    if token:
+                        results.append((type_val, token))
+            else:
+                for line in scan_raw.splitlines():
+                    line = line.strip()
+                    if line:
+                        results.append((type_val, line))
+        return results
 
 
 # ─── Parsing & Normalization ─────────────────────────────────────────────────
 
 # not phase based
-def parse_descriptions_to_manifest(descriptions: list[tuple[str, str]], email_date: datetime) -> tuple[dict, list[str]]:
+def parse_descriptions_to_manifest(
+    descriptions: list[tuple[str, str]], email_date: datetime
+) -> tuple[dict, list[str]]:
     """
-    Apply regex to each description string and build a session manifest.
+    Apply regex to each (type, scan) tuple and build a session manifest.
 
-    Scan format: <MVA:8 digits><AREA_ID:uppercase>[r][c]
-      r = repair flag (only valid on repair-eligible areas, e.g. WS)
-      c = claim listed flag
-
-    On parse error (MALFORMED_SCAN, AMBIGUOUS_LOCATION, INVALID_REPAIR) the
-    entry is logged as a warning and skipped entirely.  No error rows are
-    written to the manifest or the sheet.
-
-    Args:
-        descriptions: List of (type_value, description) tuples from email parsing.
-                      type_value is the email Type column (e.g., '0420APO').
-        email_date: Email Date header as datetime
+    The type value (e.g., '0420APO') carries the location; the scan string
+    (e.g., '59193750WSrc') carries the MVA, area code, and flags.
 
     Returns:
-        manifest: dict keyed by MVA → {Arrival Date, MVA, FPO#, VIN, Make,
-                  Location, Action, Area, Claim#, WorkItem}
-        mva_list: list of clean 8-digit MVA strings for the worker (errors excluded)
+        manifest: dict keyed by MVA → row dict
+        mva_list: list of clean 8-digit MVA strings for the worker
     """
     log.info("Parsing: Processing %d descriptions …", len(descriptions))
 
     manifest: dict[str, dict] = {}
     mva_list: list[str] = []
     date_str = email_date.strftime("%m/%d/%Y")
-    missing_type_count = 0
-    default_work_item = RUNTIME_CONFIG.get("work_item_default_flag", "verified")
 
-    for type_value, desc in descriptions:
-        raw = desc.strip()
-        location = _extract_location_from_type(type_value)
-        if not type_value:
-            missing_type_count += 1
-
-        match = MVA_PATTERN.match(raw)
+    for type_val, scan in descriptions:
+        scan = scan.strip()
+        match = MVA_PATTERN.match(scan)
         if not match:
-            log.warning("Parsing: MALFORMED_SCAN — scan='%s'", raw)
+            log.warning("Parsing: MALFORMED_SCAN — scan='%s'", scan)
             continue
 
         mva = match.group(1)
-        area_code = match.group(2)
-        repair_flag = match.group(3)   # "r" or ""
-        claim_flag = match.group(4)    # "c" or ""
+        area_code = match.group(2).upper()
+        repair_flag = match.group(3)
+        claim_flag = match.group(4)
 
-        # Validate area code against config
-        if area_code not in AREAS:
-            log.warning("Parsing: AMBIGUOUS_LOCATION — scan='%s'", raw)
+        area_label = AREAS.get(area_code)
+        if area_label is None:
+            log.warning("Parsing: AMBIGUOUS_LOCATION — scan='%s' area_code='%s'", scan, area_code)
             continue
 
-        # Repair flag only valid on repair-eligible areas
-        if repair_flag and area_code not in REPAIR_ELIGIBLE_AREAS:
-            log.warning("Parsing: INVALID_REPAIR — scan='%s'", raw)
+        if repair_flag and area_code not in REPAIR_ELIGIBLE:
+            log.warning("Parsing: INVALID_REPAIR — scan='%s' area_code='%s' is not repair-eligible", scan, area_code)
             continue
 
-        damage_type = "Repair" if repair_flag else "Replacement"
-        damage_area = AREAS[area_code]
-        # Claim status values must match allowed UI options.
+        action = "Repair" if repair_flag else "Replacement"
         claim = "Listed" if claim_flag else "Missing"
+        location = _extract_location_from_type(type_val)
 
         manifest[mva] = {
             "Arrival Date": date_str,
             "MVA": mva,
-            "FPO#": "",      # Manually maintained — pipeline writes blank
+            "FPO#": "",
             "VIN": "",       # Populated during merge step
             "Make": "",      # Populated during merge from GlassResults Desc
             "Location": location,
-            "Action": damage_type,
-            "Area": damage_area,
+            "Action": action,
+            "Area": area_label,
             "Claim#": claim,
-            "WorkItem": default_work_item,
+            "WorkItem": "verified",
         }
         mva_list.append(mva)
 
-    if missing_type_count > 0:
-        log.warning("Parsing: %d entries missing/empty Type value — using default location '%s'", missing_type_count, LOCATION)
-    log.info("Parsing: Manifest built — %d valid MVAs", len(mva_list))
+    log.info("Parsing: Manifest built — %d valid MVAs, %d skipped",
+             len(manifest), len(descriptions) - len(manifest))
     return manifest, mva_list
-
-
-def apply_cycle_day_tracking(manifest: dict[str, dict], mva_list: list[str], snapshot_date: datetime) -> None:
-    """Update local cycle-day store and annotate manifest rows with cycle metrics."""
-    tracker = CycleTracker(
-        CYCLE_TRACKER_STORE,
-        gap_grace_days=CYCLE_GAP_GRACE_DAYS,
-        completed_retention=CYCLE_COMPLETED_RETENTION,
-    )
-    cycle_days_by_mva = tracker.record_snapshot(mva_list, snapshot_date.date())
-    for mva, days in cycle_days_by_mva.items():
-        if mva in manifest:
-            # Kept out of the Google sheet 8-column contract; useful for metrics tab/reporting.
-            manifest[mva]["Cycle Days"] = days
-    log.info(
-        "Cycle tracking: %d active MVAs recorded (grace=%d day(s))",
-        len(cycle_days_by_mva),
-        CYCLE_GAP_GRACE_DAYS,
-    )
 
 
 # ─── Worker Processing ────────────────────────────────────────────────────────
 
 # Not phase and make the methods action oriented with names that make sense
-def parse_glass_data_results(mva_list: list[str]) -> None:
+def run_worker_for_mvas(mva_list: list[str]) -> None:
     """
     Write clean MVAs to the CSV interface file, then invoke the
     external GlassDataParser.py worker as a subprocess.
@@ -706,6 +473,12 @@ def parse_glass_data_results(mva_list: list[str]) -> None:
         writer.writerow(["MVA"])
         for mva in mva_list:
             writer.writerow([mva])
+
+    if not WORKER_SCRIPT.exists():
+        raise FileNotFoundError(
+            f"Worker script not found: {WORKER_SCRIPT}. "
+            "Ensure the CGI submodule is initialised: git submodule update --init"
+        )
 
     log.info("Worker: Invoking worker subprocess — %s", WORKER_SCRIPT)
     subprocess.check_call(
@@ -799,13 +572,6 @@ def merge_manifest_with_results(manifest: dict) -> pd.DataFrame:
 
 def _get_worksheet():
     """Authenticate with Google Sheets and return the GlassClaims worksheet."""
-    if gspread is None:
-        raise ModuleNotFoundError(
-            "Missing dependency 'gspread'. Use the project virtual environment: "
-            "'.venv\\Scripts\\python.exe GlassOrchestrator.py' "
-            "or run 'Run-GlassOrchestrator.cmd'."
-        )
-
     gc = gspread.service_account(filename=str(SERVICE_ACCOUNT_JSON))
     sh = gc.open_by_key(SPREADSHEET_ID)
     return sh.worksheet(SHEET_NAME)
@@ -845,10 +611,8 @@ def persist_new_rows(df: pd.DataFrame) -> pd.DataFrame:
     # Build rows as lists matching the 8-column contract
     rows_to_insert = _rows_from_dataframe(new_rows)
 
-    # Insert rows above the summary section (pushes summary down automatically).
-    # inherit_from_before=True: new rows inherit formatting from the data row above,
-    # not the summary row below (which is orange/bold and would corrupt the inserted rows).
-    ws.insert_rows(rows_to_insert, row=insert_row, inherit_from_before=True)
+    # Insert rows above the summary section (pushes summary down automatically)
+    ws.insert_rows(rows_to_insert, row=insert_row)
 
     log.info("Persistence: Wrote %d new rows to Google Sheet at row %d", len(new_rows), insert_row)
     return new_rows
@@ -871,23 +635,14 @@ def _find_insert_row(ws) -> int:
 
 
 def _rows_from_dataframe(df: pd.DataFrame) -> list[list[str]]:
-    """Build sheet row payloads in the canonical column order.
+    """Build sheet row payloads in canonical column order, applying vendor label mapping."""
+    def _cell(row, col):
+        val = row[col]
+        if col == "Action":
+            return VENDOR_LABELS.get(val, val)
+        return val
 
-    Action is mapped to its vendor label (e.g. 'Repair' →
-    'Repair(SuperGlass)') via VENDOR_LABELS before writing.  Internal
-    pipeline logic always uses the short form; the sheet receives the
-    display form.
-    """
-    rows = []
-    for _, row in df.iterrows():
-        values = []
-        for col in COLUMNS:
-            val = row[col]
-            if col == "Action":
-                val = VENDOR_LABELS.get(str(val), val)
-            values.append(val)
-        rows.append(values)
-    return rows
+    return [[_cell(row, col) for col in COLUMNS] for _, row in df.iterrows()]
 
 
 def _load_existing_keys(ws) -> set[str]:
@@ -907,11 +662,9 @@ def _load_existing_keys(ws) -> set[str]:
             return existing_keys
         for row in all_vals[1:]:
             if len(row) > max(mva_idx, date_idx) and row[mva_idx].strip():
-                mva = row[mva_idx].strip()
-                arrival_date = row[date_idx].strip()
-                key = f"{mva}|{arrival_date}"
+                key = f"{row[mva_idx]}|{row[date_idx]}"
                 existing_keys.add(key)
-    except (AttributeError, KeyError, TypeError, ValueError, OSError) as exc:
+    except Exception as exc:
         log.warning("Could not read existing sheet data — %s", exc)
         #This is a major problem and breaks the entire flow
     return existing_keys
@@ -927,27 +680,32 @@ def is_duplicate(mva: str, date: str, existing_keys: set[str]) -> bool:
 
 def notify_order_items(df: pd.DataFrame) -> None:
     """
-    Build an HTML email with a styled table for all persisted rows,
-    and send it. Rows with VIN='N/A' are highlighted red to flag the
-    ordering team for manual action.
+    Build an HTML notification for all order items and send it.
+    Rows with VIN='N/A' are highlighted red to flag the ordering team for manual action.
     """
     log.info("Notification: Building order alert …")
 
-    items = df.copy()
-    if items.empty:
-        log.info("Notification: No items to notify — skipping")
+    if df.empty:
+        log.info("Notification: No items — skipping")
         return
 
-    html = _build_html_table(items)
-    subject = f"Glass Order — {items.iloc[0]['Arrival Date']} ({len(items)} items)"
-    outbound = OutboundEmail(
-        subject=subject,
-        html_body=html,
-        sender=SENDER_ADDRESS,
-        recipients=NOTIFY_RECIPIENTS,
-    )
-    _send_email(outbound)
+    html = _build_html_table(df)
+    subject = f"Glass Order — {df.iloc[0]['Arrival Date']} ({len(df)} items)"
+    message = EmailMessage(subject=subject, html_body=html)
+    _send_email(message)
     log.info("Notification: Sent to %s", NOTIFY_RECIPIENTS)
+
+
+# Keep legacy name as alias for any callers not yet updated
+notify_replacement_items = notify_order_items
+
+# Alias used in tests and external callers
+parse_glass_data_results = run_worker_for_mvas
+
+
+def apply_cycle_day_tracking(*args, **kwargs) -> None:
+    """Placeholder for cycle-day tracking integration (not yet implemented)."""
+    pass
 
 
 def _build_html_table(df: pd.DataFrame) -> str:
@@ -972,8 +730,8 @@ def _build_html_table(df: pd.DataFrame) -> str:
             {vin_cell}
             <td>{row['Make']}</td>
             <td>{row['Location']}</td>
-            <td>{VENDOR_LABELS.get(str(row['Action']), row['Action'])}</td>
-            <td>{row['Area']}</td>
+            <td>{row.get('Action', row.get('Damage Type', ''))}</td>
+            <td>{row.get('Area', '')}</td>
             <td>{row['Claim#']}</td>
             <td>{row['WorkItem']}</td>
         </tr>\n"""
@@ -1023,24 +781,24 @@ def _build_html_table(df: pd.DataFrame) -> str:
     """
 
 
-def _send_email(message: OutboundEmail) -> None:
-    """Send an outbound HTML email via Gmail SMTP."""
-    if not message.sender or not message.recipients:
+def _send_email(message: EmailMessage) -> None:
+    """Send an HTML email via Gmail SMTP."""
+    if not SENDER_ADDRESS or not NOTIFY_RECIPIENTS[0]:
         log.warning("Notification: Email credentials not configured — printing subject only")
         log.info("Subject: %s", message.subject)
         return
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = message.subject
-    msg["From"] = message.sender
-    msg["To"] = ", ".join(message.recipients)
+    msg["From"] = SENDER_ADDRESS
+    msg["To"] = ", ".join(NOTIFY_RECIPIENTS)
     msg.attach(MIMEText(message.html_body, "html"))
 
     with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
         server.ehlo()
         server.starttls()
         server.login(EMAIL_ACCOUNT, EMAIL_PASSWORD)
-        server.sendmail(message.sender, message.recipients, msg.as_string())
+        server.sendmail(SENDER_ADDRESS, NOTIFY_RECIPIENTS, msg.as_string())
 
 
 # ─── Pipeline Orchestrator ────────────────────────────────────────────────────
@@ -1048,9 +806,6 @@ def _send_email(message: OutboundEmail) -> None:
 
 def run_pipeline() -> None:
     """Execute the end-to-end pipeline with step-level error handling."""
-    # Broad exception handling is intentional here to fail-fast by stage
-    # while preserving a stable top-level orchestrator process.
-    # pylint: disable=broad-exception-caught
     log.info("=" * 60)
     log.info("GlassOrchestrator pipeline starting")
     log.info("=" * 60)
@@ -1077,12 +832,7 @@ def run_pipeline() -> None:
         log.info("Pipeline complete — no valid MVAs after parsing")
         return
 
-    # Step 2b: Cycle-day tracking (local JSON state)
-    try:
-        apply_cycle_day_tracking(manifest, mva_list, email_date)
-    except Exception as exc:
-        # Tracking should not block operational processing.
-        log.error("Cycle tracking failed — %s", exc, exc_info=True)
+    apply_cycle_day_tracking(manifest)
 
     # Step 3: Worker
     try:
@@ -1119,12 +869,10 @@ def run_pipeline() -> None:
 
     # Step 7: Notify
     try:
-        from core.eligibility import is_notification_eligible
-        eligible_rows = df_new_rows[df_new_rows.apply(lambda r: is_notification_eligible(r.to_dict()), axis=1)]
-        notify_order_items(eligible_rows)
+        notify_order_items(df_new_rows)
     except Exception as exc:
         log.error("Notification failed — %s", exc, exc_info=True)
-        # Notification failure is non-fatal for data persistence; pipeline ends here
+        # Notification failure should not lose data; log and continue
         return
 
     log.info("=" * 60)
