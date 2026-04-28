@@ -63,6 +63,16 @@ class TestUT1_SuffixRegex:
         assert m.group(3) == ""
         assert m.group(4) == "c"
 
+    def test_lowercase_scan_matches_case_insensitively(self):
+        """59193750wsc → parser accepts scanner-lowercase area/suffix values."""
+        manifest, mva_list = parse_descriptions_to_manifest(
+            [("0305APO", "59193750wsc")], datetime(2026, 3, 5)
+        )
+        assert manifest["59193750"]["Action"] == "Replacement"
+        assert manifest["59193750"]["Area"] == "Windshield"
+        assert manifest["59193750"]["Claim#"] == "Listed"
+        assert mva_list == ["59193750"]
+
     def test_both_suffixes(self):
         """59340120WSrc → both flags captured"""
         m = MVA_PATTERN.match("59340120WSrc")
