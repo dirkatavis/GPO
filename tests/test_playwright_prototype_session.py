@@ -28,6 +28,7 @@ def _make_context_and_page_mocks(url_fragment: str = "/workspace/"):
     # so _is_on_login_page etc. all return False → "session restored" branch is taken.
     locator_mock = AsyncMock()
     locator_mock.wait_for = AsyncMock(side_effect=Exception("not visible"))
+    locator_mock.first = locator_mock
     page.locator = MagicMock(return_value=locator_mock)
     page.goto = AsyncMock()
     page.url = f"https://example.com{url_fragment}"
@@ -60,8 +61,8 @@ class TestStorageStateDetection:
             return await ensure_authenticated_context(browser)
 
         asyncio.run(run())
-
-        browser.new_context.assert_called_once_with(storage_state=str(state_file))
+        call_kwargs = browser.new_context.call_args_list[0].kwargs
+        assert call_kwargs.get("storage_state") == str(state_file)
 
     def test_missing_storage_state_triggers_fresh_login(self, tmp_path, monkeypatch):
         """When storage_state.json is absent, new_context is called with NO storage_state arg."""
@@ -76,6 +77,7 @@ class TestStorageStateDetection:
         fresh_page.url = "https://example.com/workspace/"
         locator_mock = AsyncMock()
         locator_mock.wait_for = AsyncMock(side_effect=Exception("not visible"))
+        locator_mock.first = locator_mock
         fresh_page.locator = MagicMock(return_value=locator_mock)
 
         monkeypatch.setattr("playwright_prototype.session.STORAGE_STATE_PATH", state_file)

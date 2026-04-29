@@ -4,11 +4,23 @@ import csv
 import logging
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from playwright.async_api import async_playwright
 
-from playwright_prototype.config import resolve_headless, resolve_step_delay
-from playwright_prototype.session import ensure_authenticated_context
+if TYPE_CHECKING:
+    from playwright.async_api import Browser, BrowserContext, Playwright
+
+from playwright_prototype.config import (
+    resolve_browser_mode,
+    resolve_debugger_address,
+    resolve_edge_profile_directory,
+    resolve_edge_user_data_dir,
+    resolve_headless,
+    resolve_initial_delay,
+    resolve_step_delay,
+)
+from playwright_prototype.session import ensure_attached_context, ensure_profile_context
 from playwright_prototype.steps import (
     click_add_work_item,
     complete_mileage_dialog,
@@ -32,6 +44,71 @@ logging.basicConfig(
     ],
 )
 log = logging.getLogger("playwright_prototype")
+
+
+async def _connect_attached_browser(pw: "Playwright", preferred_address: str) -> tuple["Browser", str]:
+    """Attach to an already-running Edge CDP endpoint.
+
+    Tries preferred address first, then common local debugger endpoints.
+    """
+    candidates = [
+        preferred_address,
+        "127.0.0.1:9222",
+        "localhost:9222",
+        "127.0.0.1:9223",
+        "localhost:9223",
+    ]
+
+    tried: set[str] = set()
+    last_error: Exception | None = None
+    for address in candidates:
+        normalized = address.strip()
+        if not normalized or normalized in tried:
+            continue
+        tried.add(normalized)
+        endpoint = f"http://{normalized}"
+        try:
+            browser = await pw.chromium.connect_over_cdp(endpoint)
+            return browser, normalized
+        except Exception as exc:
+            last_error = exc
+
+    raise RuntimeError(
+        "Failed to attach to an open Edge debug session. "
+        "Start Edge with --remote-debugging-port=9222 and your corporate profile, "
+        f"then retry. Tried: {', '.join(tried)}. Last error: {last_error}"
+    )
+
+
+async def _launch_persistent_profile_context(
+    pw: "Playwright",
+    *,
+    user_data_dir: Path,
+    profile_directory: str,
+    headless: bool,
+) -> "BrowserContext":
+    """Launch a new Playwright-controlled Edge window against a real profile."""
+    launch_args = [
+        "--disable-blink-features=AutomationControlled",
+        f"--profile-directory={profile_directory}",
+    ]
+    if not headless:
+        launch_args.append("--start-maximized")
+
+    try:
+        return await pw.chromium.launch_persistent_context(
+            user_data_dir=str(user_data_dir),
+            channel="msedge",
+            headless=headless,
+            no_viewport=not headless,
+            args=launch_args,
+        )
+    except Exception as exc:
+        raise RuntimeError(
+            "Failed to launch a persistent Edge profile session. "
+            f"Close any running Edge windows using profile '{profile_directory}' and retry. "
+            f"User data dir: {user_data_dir}. Error: {exc}"
+        ) from exc
 
 
 def load_csv(path: Path) -> list[dict]:
@@ -74,24 +151,66 @@ async def process_mva(page, mva: str, location: str, action: str, step_delay_ms:
     await confirm_completion(page)
 
 
-async def main(csv_path: Path = DEFAULT_CSV, pause: bool = False) -> int:
+async def main(
+    csv_path: Path = DEFAULT_CSV,
+    pause: bool = False,
+    browser_mode: str | None = None,
+    debugger_address: str | None = None,
+    edge_user_data_dir: Path | None = None,
+    edge_profile_directory: str | None = None,
+) -> int:
     headless = resolve_headless()
+    resolved_browser_mode = browser_mode or resolve_browser_mode()
+    resolved_debugger_address = debugger_address or resolve_debugger_address()
+    resolved_edge_user_data_dir = edge_user_data_dir or resolve_edge_user_data_dir()
+    resolved_edge_profile_directory = edge_profile_directory or resolve_edge_profile_directory()
+    initial_delay_ms = resolve_initial_delay()
     step_delay_ms = resolve_step_delay()
     rows = load_csv(csv_path)
     if not rows:
         log.error("No rows loaded from %s — aborting", csv_path)
         return 1
 
-    log.info("Starting Playwright prototype — %d MVA(s) | headless=%s | step_delay=%dms",
-             len(rows), headless, step_delay_ms)
+    log.info(
+        "Starting Playwright prototype — %d MVA(s) | mode=%s | headless=%s | initial_delay=%dms | step_delay=%dms | debugger=%s | user_data_dir=%s | profile=%s",
+        len(rows),
+        resolved_browser_mode,
+        headless,
+        initial_delay_ms,
+        step_delay_ms,
+        resolved_debugger_address,
+        resolved_edge_user_data_dir,
+        resolved_edge_profile_directory,
+    )
 
     async with async_playwright() as pw:
-        launch_args = ["--disable-blink-features=AutomationControlled"]
-        if not headless:
-            launch_args.append("--start-maximized")
-        browser = await pw.chromium.launch(headless=headless, args=launch_args)
+        browser: Browser | None = None
+        context: BrowserContext | None = None
         try:
-            context, page = await ensure_authenticated_context(browser, no_viewport=not headless)
+            if resolved_browser_mode == "attach":
+                browser, attached_address = await _connect_attached_browser(
+                    pw,
+                    resolved_debugger_address,
+                )
+                log.info("Attached to Edge debug endpoint: %s", attached_address)
+                context, page = await ensure_attached_context(browser, no_viewport=not headless)
+            else:
+                context = await _launch_persistent_profile_context(
+                    pw,
+                    user_data_dir=resolved_edge_user_data_dir,
+                    profile_directory=resolved_edge_profile_directory,
+                    headless=headless,
+                )
+                log.info(
+                    "Launched persistent Edge profile session: %s (%s)",
+                    resolved_edge_user_data_dir,
+                    resolved_edge_profile_directory,
+                )
+                context, page = await ensure_profile_context(context)
+
+            if initial_delay_ms > 0:
+                log.info("[MAIN] Startup settle delay: %dms", initial_delay_ms)
+                await page.wait_for_timeout(initial_delay_ms)
 
             await warmup_compass(page)
 
@@ -99,8 +218,11 @@ async def main(csv_path: Path = DEFAULT_CSV, pause: bool = False) -> int:
                 row = rows[0]
                 mva, location, action = row["mva"], row["location"], row["action"]
                 log.info("[MAIN] --pause stepping through MVA %s", mva)
+                visual_delay_ms = step_delay_ms if step_delay_ms >= 2000 else 2000
 
                 async def step(coro, label: str):
+                    if visual_delay_ms:
+                        await page.wait_for_timeout(visual_delay_ms)
                     await coro
                     log.info("[MAIN] %s — pausing", label)
                     await page.pause()
@@ -134,7 +256,10 @@ async def main(csv_path: Path = DEFAULT_CSV, pause: bool = False) -> int:
             log.exception("Prototype failed during setup.")
             return 1
         finally:
-            await browser.close()
+            if context is not None:
+                await context.close()
+            elif browser is not None:
+                await browser.close()
 
 
 if __name__ == "__main__":
@@ -142,6 +267,30 @@ if __name__ == "__main__":
     parser.add_argument("--fresh", action="store_true", help="Delete storage_state.json before running to force a full login")
     parser.add_argument("--csv", type=Path, default=DEFAULT_CSV, help="Path to MVA CSV file")
     parser.add_argument("--pause", action="store_true", help="Step through each action with Playwright Inspector pauses")
+    parser.add_argument(
+        "--browser-mode",
+        choices=["profile", "attach"],
+        default=None,
+        help="Browser startup mode. Defaults to profile launch on this branch.",
+    )
+    parser.add_argument(
+        "--debugger-address",
+        type=str,
+        default=None,
+        help="Edge remote-debugging address (host:port). Defaults to 127.0.0.1:9222",
+    )
+    parser.add_argument(
+        "--edge-user-data-dir",
+        type=Path,
+        default=None,
+        help="Edge user data directory for persistent profile launches.",
+    )
+    parser.add_argument(
+        "--edge-profile-directory",
+        type=str,
+        default=None,
+        help="Edge profile directory name such as 'Default' or 'Profile 2'.",
+    )
     args = parser.parse_args()
 
     if args.fresh:
@@ -150,4 +299,15 @@ if __name__ == "__main__":
             STORAGE_STATE_PATH.unlink()
             print(f"Deleted {STORAGE_STATE_PATH} — will perform full login")
 
-    sys.exit(asyncio.run(main(csv_path=args.csv, pause=args.pause)))
+    sys.exit(
+        asyncio.run(
+            main(
+                csv_path=args.csv,
+                pause=args.pause,
+                browser_mode=args.browser_mode,
+                debugger_address=args.debugger_address,
+                edge_user_data_dir=args.edge_user_data_dir,
+                edge_profile_directory=args.edge_profile_directory,
+            )
+        )
+    )

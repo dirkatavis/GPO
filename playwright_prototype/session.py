@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from playwright.async_api import Browser, BrowserContext, Page
 
-from playwright_prototype.config import LOGIN_URL, SSO_EMAIL, STORAGE_STATE_PATH
+from playwright_prototype.config import FOUNDRY_HOME_URL, LOGIN_URL, SSO_EMAIL, STORAGE_STATE_PATH
 from playwright_prototype.login import (
     click_compass_mobile_tile,
     enter_wwid,
@@ -17,6 +17,7 @@ from playwright_prototype.login import (
 )
 
 log = logging.getLogger(__name__)
+BUTTON_PUSH_DELAY_MS = 2000
 
 
 def _credentials() -> tuple[str, str, str, str]:
@@ -48,6 +49,42 @@ async def _is_on_sso_picker(page: Page) -> bool:
         return False
 
 
+async def _select_first_sso_account(page: Page) -> None:
+    """Select the first account tile on the Microsoft SSO picker."""
+    selectors = [
+        '[data-testid="account-tile"]',
+        '#tilesHolder div[role="button"]',
+        '#tilesHolder .table',
+        '[role="listitem"]',
+        'div[data-test-id="userTile"]',
+        'div.table[role="button"]',
+    ]
+    for selector in selectors:
+        try:
+            account_tile = page.locator(selector).first
+            await account_tile.wait_for(state="visible", timeout=3_000)
+            await page.wait_for_timeout(BUTTON_PUSH_DELAY_MS)
+            await account_tile.click(timeout=8_000)
+            log.info("[SESSION] Selected first SSO account tile via selector: %s", selector)
+            return
+        except Exception:
+            continue
+
+    raise RuntimeError("[SESSION] Unable to find/click first SSO account tile on picker")
+
+
+def _score_attached_page(page: Page) -> int:
+    """Score candidate pages so attach mode picks the most relevant tab."""
+    url = (page.url or "").lower()
+    if "login.microsoftonline.com" in url:
+        return 100
+    if "palantirfoundry.com" in url:
+        return 80
+    if "fleet-operations" in url or "compass" in url:
+        return 70
+    return 10
+
+
 async def _is_on_compass_mobile_picker(page: Page) -> bool:
     """True if the Foundry workspace app tile for Compass Mobile is visible."""
     from config.config_loader import get_config
@@ -55,7 +92,10 @@ async def _is_on_compass_mobile_picker(page: Page) -> bool:
         label = str(get_config("compass_app_label", "Compass Mobile"))
         await page.locator(
             f"//a[@role='button']//span[contains(normalize-space(.), '{label}')]"
-        ).wait_for(state="visible", timeout=3_000)
+            f" | //a[@role='button'][.//*[contains(normalize-space(.), '{label}')]]"
+            f" | //button[.//*[contains(normalize-space(.), '{label}')]]"
+            f" | //*[contains(normalize-space(.), '{label}')]"
+        ).first.wait_for(state="visible", timeout=12_000)
         return True
     except Exception:
         return False
@@ -70,6 +110,66 @@ async def _is_on_wwid_screen(page: Page) -> bool:
         return True
     except Exception:
         return False
+
+
+async def _is_on_compass_app_page(page: Page) -> bool:
+    """True when already inside Compass app after cached auth/session restore."""
+    candidates = [
+        'input.bp6-input[placeholder*="Enter MVA"]',
+        'input[type="text"][placeholder*="MVA"]',
+        'button:has-text("Add Work Item")',
+    ]
+    for selector in candidates:
+        try:
+            await page.locator(selector).first.wait_for(state="visible", timeout=3_000)
+            return True
+        except Exception:
+            continue
+    return False
+
+
+async def _advance_existing_session_page(page: Page) -> Page:
+    """Advance an existing trusted session page into the Compass app."""
+    current_url = (page.url or "").lower()
+    if not current_url or current_url == "about:blank":
+        log.info("[SESSION] Existing session page blank — opening Foundry home URL")
+        await page.goto(FOUNDRY_HOME_URL, wait_until="domcontentloaded")
+
+    if await _is_on_login_page(page):
+        log.info("[SESSION] Existing session page is on login form — running full login fallback")
+        username, password, login_id, sso_email = _credentials()
+        page = await perform_full_login(
+            page,
+            username=username,
+            password=password,
+            login_id=login_id,
+            sso_email=sso_email,
+        )
+
+    if await _is_on_sso_picker(page):
+        log.info("[SESSION] Existing session page is on SSO picker — selecting first account")
+        await _select_first_sso_account(page)
+        await page.wait_for_load_state("domcontentloaded")
+
+    current_url = (page.url or "").lower()
+    if "m365.cloud.microsoft" in current_url or "login.microsoftonline.com" in current_url:
+        log.info("[SESSION] Moving from Microsoft auth page to Foundry home URL")
+        await page.goto(FOUNDRY_HOME_URL, wait_until="domcontentloaded")
+
+    if await _is_on_compass_app_page(page):
+        log.info("[SESSION] Already on Compass app page from existing session")
+    elif await _is_on_compass_mobile_picker(page):
+        log.info("[SESSION] Existing session page on Compass picker — opening Compass Mobile")
+        page = await click_compass_mobile_tile(page)
+        # Give the new tab time to render the WWID form before probing.
+        await page.wait_for_timeout(3_000)
+
+    if await _is_on_wwid_screen(page):
+        log.info("[SESSION] Existing session page on WWID screen — submitting login ID")
+        _, _, login_id, _ = _credentials()
+        page = await enter_wwid(page, login_id)
+
+    return page
 
 
 _WEBDRIVER_MASK = "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});"
@@ -122,16 +222,16 @@ async def ensure_authenticated_context(browser: Browser, *, no_viewport: bool = 
             log.info("[SESSION] SSO picker detected — selecting account")
             await select_sso_account(page, sso_email)
             page = await click_compass_mobile_tile(page)
-            await enter_wwid(page, login_id)
+            page = await enter_wwid(page, login_id)
 
         elif await _is_on_compass_mobile_picker(page):
             log.info("[SESSION] Compass Mobile picker detected — clicking tile")
             page = await click_compass_mobile_tile(page)
-            await enter_wwid(page, login_id)
+            page = await enter_wwid(page, login_id)
 
         elif await _is_on_wwid_screen(page):
             log.info("[SESSION] WWID screen detected — re-entering WWID")
-            await enter_wwid(page, login_id)
+            page = await enter_wwid(page, login_id)
 
         else:
             log.info("[SESSION] Session restored — already on OpCode list")
@@ -143,4 +243,66 @@ async def ensure_authenticated_context(browser: Browser, *, no_viewport: bool = 
     log.info("[SESSION] Saving session state to %s", STORAGE_STATE_PATH)
     await context.storage_state(path=str(STORAGE_STATE_PATH))
 
+    return context, page
+
+
+async def ensure_attached_context(browser: Browser, *, no_viewport: bool = False) -> tuple[BrowserContext, Page]:
+    """Return an existing page from an attached CDP browser session.
+
+    This mode intentionally avoids automating SSO/login and instead reuses
+    the user's trusted corporate Edge profile/session.
+    """
+    context: BrowserContext
+    page: Page
+
+    # Preferred behavior: use the primary tab (0-based index) first.
+    if browser.contexts and browser.contexts[0].pages:
+        context = browser.contexts[0]
+        page = context.pages[0]
+        score = _score_attached_page(page)
+        log.info("[SESSION] Attach selected primary tab[0] URL: %s", page.url)
+        if score < 70:
+            log.info(
+                "[SESSION] Primary tab is not auth/Compass related (score=%s) — opening Foundry home URL",
+                score,
+            )
+            await page.goto(FOUNDRY_HOME_URL, wait_until="domcontentloaded")
+    else:
+        candidates: list[tuple[int, BrowserContext, Page]] = []
+        for ctx in browser.contexts:
+            for existing_page in ctx.pages:
+                candidates.append((_score_attached_page(existing_page), ctx, existing_page))
+
+        if candidates:
+            score, context, page = max(candidates, key=lambda item: item[0])
+            log.info("[SESSION] Attach selected tab URL: %s", page.url)
+            if score < 70:
+                log.info(
+                    "[SESSION] Selected tab is not auth/Compass related (score=%s) — opening Foundry home URL",
+                    score,
+                )
+                await page.goto(FOUNDRY_HOME_URL, wait_until="domcontentloaded")
+        elif browser.contexts:
+            context = browser.contexts[0]
+            page = await context.new_page()
+            await page.goto(LOGIN_URL, wait_until="domcontentloaded")
+            log.info("[SESSION] Attach opened login URL in existing context")
+        else:
+            context = await _new_context(browser, no_viewport=no_viewport)
+            page = await context.new_page()
+            await page.goto(LOGIN_URL, wait_until="domcontentloaded")
+            log.info("[SESSION] Attach created new context and opened login URL")
+
+    page = await _advance_existing_session_page(page)
+    return context, page
+
+
+async def ensure_profile_context(context: BrowserContext) -> tuple[BrowserContext, Page]:
+    """Return a launched persistent-profile context ready for Compass actions."""
+    if context.pages:
+        page = context.pages[0]
+    else:
+        page = await context.new_page()
+
+    page = await _advance_existing_session_page(page)
     return context, page
