@@ -25,6 +25,7 @@ from playwright_prototype.config import (
     resolve_edge_user_data_dir,
     resolve_headless,
     resolve_initial_delay,
+    resolve_step_delay,
 )
 from playwright_prototype.session import ensure_profile_context
 from playwright_prototype.steps import warmup_compass as pw_warmup_compass
@@ -47,11 +48,34 @@ def _load_csv(path: str) -> list[dict]:
         return [row for row in csv.DictReader(f) if row.get("mva", "").strip()]
 
 
+def _resolve_row_work_item_type(row: dict, default_type: str) -> str:
+    """Resolve per-row type from CSV columns with sane fallbacks.
+
+    Priority:
+    1) Explicit ``type`` column
+    2) ``action`` column mapping (Repair -> glass repair, else glass damage)
+    3) CLI/default type
+    """
+    explicit_type = (row.get("type") or "").strip()
+    if explicit_type:
+        return explicit_type
+
+    action = (row.get("action") or "").strip().lower()
+    if action == "repair":
+        # Repair work items are filed under "Glass Damage" with subtype "Windshield Chip"
+        # Tile text contains "windshield chip", not "glass repair"
+        return "windshield chip"
+    if action in {"replace", "replacement"}:
+        return "glass damage"
+
+    return default_type
+
+
 def _build_targets(args: argparse.Namespace) -> list[tuple[str, str]]:
     if args.csv_path:
         rows = _load_csv(args.csv_path)
         targets = [
-            (r["mva"].strip(), r.get("type", args.work_item_type).strip() or args.work_item_type)
+            (r["mva"].strip(), _resolve_row_work_item_type(r, args.work_item_type))
             for r in rows
         ]
         log.info("[VERIFY] Loaded %d MVA(s) from %s", len(targets), args.csv_path)
@@ -98,7 +122,9 @@ def _log_summary(results: list[dict]) -> tuple[int, int]:
     log.info("[VERIFY] %s", "=" * 50)
     for r in results:
         status_icon = "?" if r["result"] == RESULT_FOUND else ("?" if r["result"] == RESULT_NOT_FOUND else "!")
-        log.info("[VERIFY]   %s  %12s  [%s]  ?  %s", status_icon, r["mva"], r["type"], r["result"])
+        detail = r.get("detail", "")
+        detail_suffix = f"  ({detail})" if detail else ""
+        log.info("[VERIFY]   %s  %12s  [%s]  ?  %s%s", status_icon, r["mva"], r["type"], r["result"], detail_suffix)
     log.info("[VERIFY] %s", "=" * 50)
 
     return not_found_count, failed_count
@@ -187,8 +213,8 @@ def _run_selenium_verification(args: argparse.Namespace, targets: list[tuple[str
     return results
 
 
-async def _playwright_find_work_item(page: "Page", work_item_type: str) -> bool:
-    """Return True if an open work item tile matches the requested keyword."""
+async def _playwright_find_work_item(page: "Page", work_item_type: str) -> tuple[bool, str]:
+    """Return (found, tile_detail) where tile_detail is the matching tile's text (empty if not found)."""
     keyword = work_item_type.strip().lower()
 
     tiles = page.locator("div[class*='fleet-operations-pwa__scan-record__']").filter(
@@ -197,11 +223,13 @@ async def _playwright_find_work_item(page: "Page", work_item_type: str) -> bool:
 
     count = await tiles.count()
     for idx in range(count):
-        text = (await tiles.nth(idx).inner_text()).strip().lower()
-        if keyword in text:
-            return True
+        raw = (await tiles.nth(idx).inner_text()).strip()
+        if keyword in raw.lower():
+            # Condense multi-line tile text to a single readable line
+            detail = " | ".join(line.strip() for line in raw.splitlines() if line.strip())
+            return True, detail
 
-    return False
+    return False, ""
 
 
 async def _run_playwright_verification_async(args: argparse.Namespace, targets: list[tuple[str, str]]) -> list[dict]:
@@ -210,6 +238,7 @@ async def _run_playwright_verification_async(args: argparse.Namespace, targets: 
     headless = resolve_headless()
     edge_user_data_dir = resolve_edge_user_data_dir()
     edge_profile_directory = resolve_edge_profile_directory()
+    step_delay_ms = resolve_step_delay()
 
     async with async_playwright() as pw:
         context = await pw.chromium.launch_persistent_context(
@@ -234,11 +263,35 @@ async def _run_playwright_verification_async(args: argparse.Namespace, targets: 
             await asyncio.wait_for(pw_warmup_compass(page), timeout=args.timeout_seconds)
 
             for mva, work_item_type in targets:
+                # Poll for UI stability with 1s intervals, 10s timeout total
+                log.info("[VERIFY] Settling UI before checking MVA %s (polling every 1s, 10s timeout)...", mva)
+                settle_start = time.monotonic()
+                settle_timeout = 10.0
+                while (time.monotonic() - settle_start) < settle_timeout:
+                    try:
+                        await page.wait_for_load_state("networkidle", timeout=1_000)
+                        log.info("[VERIFY] UI settled")
+                        break
+                    except (PlaywrightTimeoutError, asyncio.TimeoutError):
+                        elapsed = time.monotonic() - settle_start
+                        if elapsed < settle_timeout:
+                            log.debug("[VERIFY] UI not yet idle (%.1fs elapsed), polling again...", elapsed)
+                            continue
+                        else:
+                            log.warning("[VERIFY] %s - UI settle timeout after %.1fs, proceeding", mva, elapsed)
+                            break
+
+                if step_delay_ms > 0:
+                    await page.wait_for_timeout(step_delay_ms)
+
                 log.info("[VERIFY] Checking MVA %s for open '%s' work item...", mva, work_item_type)
                 started = time.monotonic()
 
                 try:
                     await asyncio.wait_for(pw_navigate_to_mva(page, mva), timeout=args.timeout_seconds)
+                    # Give Compass UI a short settle window after route/navigation churn.
+                    if step_delay_ms > 0:
+                        await page.wait_for_timeout(step_delay_ms)
                 except asyncio.TimeoutError:
                     log.error("[VERIFY] %s - timed out after %ss during navigation", mva, args.timeout_seconds)
                     await _capture_playwright_screenshot(page, "timeout", mva)
@@ -254,23 +307,25 @@ async def _run_playwright_verification_async(args: argparse.Namespace, targets: 
                 remaining = max(1.0, args.timeout_seconds - elapsed)
 
                 try:
-                    found = await asyncio.wait_for(_playwright_find_work_item(page, work_item_type), timeout=remaining)
+                    found, tile_detail = await asyncio.wait_for(_playwright_find_work_item(page, work_item_type), timeout=remaining)
                     if found:
                         log.info("[VERIFY] %s - ? FOUND: open '%s' work item confirmed", mva, work_item_type)
+                        if tile_detail:
+                            log.info("[VERIFY] %s -   detail: %s", mva, tile_detail)
                         await _capture_playwright_screenshot(page, "found", mva)
-                        results.append({"mva": mva, "type": work_item_type, "result": RESULT_FOUND})
+                        results.append({"mva": mva, "type": work_item_type, "result": RESULT_FOUND, "detail": tile_detail})
                     else:
                         log.warning("[VERIFY] %s - ? NOT FOUND: no open '%s' work item", mva, work_item_type)
                         await _capture_playwright_screenshot(page, "not_found", mva)
-                        results.append({"mva": mva, "type": work_item_type, "result": RESULT_NOT_FOUND})
+                        results.append({"mva": mva, "type": work_item_type, "result": RESULT_NOT_FOUND, "detail": ""})
                 except asyncio.TimeoutError:
                     log.error("[VERIFY] %s - timed out after %ss during work item check", mva, args.timeout_seconds)
                     await _capture_playwright_screenshot(page, "timeout", mva)
-                    results.append({"mva": mva, "type": work_item_type, "result": RESULT_TIMEOUT})
+                    results.append({"mva": mva, "type": work_item_type, "result": RESULT_TIMEOUT, "detail": ""})
                 except Exception as exc:
                     log.error("[VERIFY] %s - error during check: %s", mva, exc)
                     await _capture_playwright_screenshot(page, "error", mva)
-                    results.append({"mva": mva, "type": work_item_type, "result": RESULT_ERROR})
+                    results.append({"mva": mva, "type": work_item_type, "result": RESULT_ERROR, "detail": ""})
         finally:
             await context.close()
             log.info("[VERIFY] Browser closed.")
