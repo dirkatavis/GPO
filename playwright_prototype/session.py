@@ -102,11 +102,13 @@ async def _is_on_compass_mobile_picker(page: Page) -> bool:
 
 
 async def _is_on_wwid_screen(page: Page) -> bool:
-    """True if the Compass Mobile WWID entry input is visible."""
+    """True if the Compass Mobile WWID entry input is visible.
+
+    Uses the Submit button as the discriminator — the app page never has a
+    'Submit' button, but the WWID entry screen always does.
+    """
     try:
-        await page.locator(
-            'input[class*="fleet-operations-pwa__text-input__"]'
-        ).wait_for(state="visible", timeout=3_000)
+        await page.get_by_role("button", name="Submit").wait_for(state="visible", timeout=3_000)
         return True
     except Exception:
         return False

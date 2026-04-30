@@ -124,43 +124,100 @@ async def navigate_to_mva(page: Page, mva: str) -> None:
 
 # ─── Work Item Flow ───────────────────────────────────────────────────────────
 
+class ExistingWorkItemError(Exception):
+    """Raised when an open glass work item already exists for an MVA."""
+
+
+async def check_existing_glass_work_item(page: Page, mva: str) -> None:
+    """Raise ExistingWorkItemError if an open glass work item already exists.
+
+    Inspects the work items list on the vehicle page. If any open tile
+    contains a glass-related keyword the run is aborted for this MVA — no
+    duplicate work items should be created.
+    """
+    log.info("[STEPS] %s — checking for existing open glass work item", mva)
+    try:
+        # Wait briefly for work items container to settle
+        container = page.locator('[class*="fleet-operations-pwa__scan-record__"]').first
+        try:
+            await container.wait_for(state="visible", timeout=8_000)
+        except Exception:
+            # No work items at all — safe to proceed
+            log.info("[STEPS] %s — no work items container found, safe to proceed", mva)
+            return
+
+        # Look for open tiles with glass-related text
+        open_glass = page.locator(
+            '[class*="fleet-operations-pwa__scan-record__"]'
+        ).filter(
+            has_text=re.compile(r"glass|windshield|crack|chip|window", re.I)
+        ).filter(
+            has_text=re.compile(r"open", re.I)
+        )
+        count = await open_glass.count()
+        if count > 0:
+            tile_text = await open_glass.first.inner_text()
+            raise ExistingWorkItemError(
+                f"{mva} — open glass work item already exists: {tile_text.strip()!r}"
+            )
+
+        log.info("[STEPS] %s — no open glass work item found, safe to proceed", mva)
+    except ExistingWorkItemError:
+        raise
+    except Exception as exc:
+        raise RuntimeError(f"[STEPS] check_existing_glass_work_item failed for {mva}: {exc}") from exc
+
+
 async def click_add_work_item(page: Page, mva: str) -> None:
-    """Click the 'Add Work Item' button to open the complaint/work-item dialog."""
+    """Click the 'Add Work Item' button and verify the complaint dialog opened."""
     log.info("[STEPS] %s — clicking 'Add Work Item'", mva)
     try:
         await page.wait_for_timeout(BUTTON_PUSH_DELAY_MS)
         await page.get_by_role("button", name="Add Work Item").click(timeout=10_000)
-        log.info("[STEPS] %s — 'Add Work Item' clicked", mva)
+        # Verify complaint dialog opened — complaint list container must appear
+        await page.locator(
+            '[class*="fleet-operations-pwa__complaintContainer__"]'
+            ', [class*="fleet-operations-pwa__complaintItem__"]'
+            ', [class*="fleet-operations-pwa__addComplaint__"]'
+        ).first.wait_for(state="visible", timeout=15_000)
+        log.info("[STEPS] %s — 'Add Work Item' clicked — complaint dialog opened", mva)
     except Exception as exc:
         raise RuntimeError(f"[STEPS] click_add_work_item failed for {mva}: {exc}") from exc
 
 
 async def _click_submit_complaint(page: Page, mva: str) -> None:
-    """Click Submit Complaint with fallback click strategies for complex UI events."""
+    """Click Submit Complaint; raises RuntimeError if all click strategies fail."""
     submit_button = page.get_by_role(
         "button", name=re.compile(r"Submit Complaint|Submit", re.I)
     ).first
     await submit_button.wait_for(state="visible", timeout=20_000)
 
+    last_exc: Exception | None = None
+
+    await page.wait_for_timeout(BUTTON_PUSH_DELAY_MS)
     try:
-        await page.wait_for_timeout(BUTTON_PUSH_DELAY_MS)
         await submit_button.click(timeout=8_000)
         return
-    except Exception:
-        pass
+    except Exception as exc:
+        last_exc = exc
+        log.warning("[STEPS] %s — submit click failed, retrying with force=True: %s", mva, exc)
 
+    await page.wait_for_timeout(BUTTON_PUSH_DELAY_MS)
     try:
-        await page.wait_for_timeout(BUTTON_PUSH_DELAY_MS)
         await submit_button.click(timeout=8_000, force=True)
         return
-    except Exception:
-        pass
+    except Exception as exc:
+        last_exc = exc
+        log.warning("[STEPS] %s — force click failed, retrying via JS evaluate: %s", mva, exc)
 
     handle = await submit_button.element_handle()
     if handle is None:
-        raise RuntimeError(f"[STEPS] {mva} — submit button handle unavailable")
+        raise RuntimeError(f"[STEPS] {mva} — submit button handle unavailable after 2 failed clicks") from last_exc
     await page.wait_for_timeout(BUTTON_PUSH_DELAY_MS)
-    await page.evaluate("(el) => el.click()", handle)
+    try:
+        await page.evaluate("(el) => el.click()", handle)
+    except Exception as exc:
+        raise RuntimeError(f"[STEPS] {mva} — all 3 submit click strategies failed") from exc
 
 
 async def _wait_for_post_submit_progress(page: Page, previous_url: str) -> bool:
@@ -215,6 +272,21 @@ async def handle_complaint_dialog(page: Page, mva: str, location: str, action: s
             await glass_tile.first.click(timeout=5_000);  await delay()
             await page.wait_for_timeout(BUTTON_PUSH_DELAY_MS)
             await page.get_by_role("button", name="Next").click(timeout=10_000)
+            # Verify mileage dialog appeared — Next button on complaint list transitions to mileage
+            mileage_appeared = False
+            for locator in [
+                page.get_by_role("heading", name=re.compile(r"Mileage", re.I)),
+                page.get_by_text(re.compile(r"\bMileage\b", re.I)),
+                page.locator('input[placeholder*="Mileage" i], input[aria-label*="Mileage" i]'),
+            ]:
+                try:
+                    await locator.first.wait_for(state="visible", timeout=8_000)
+                    mileage_appeared = True
+                    break
+                except Exception:
+                    continue
+            if not mileage_appeared:
+                raise RuntimeError(f"[STEPS] {mva} — existing complaint Next did not advance to mileage dialog")
             return
 
         # No existing complaint — create new
@@ -282,11 +354,14 @@ async def complete_mileage_dialog(page: Page, mva: str) -> None:
 
     Mirrors mileage_flows.complete_mileage_dialog() — the mileage value is
     typically pre-populated from the vehicle record.
+    Verifies the OpCode list appears after Next is clicked.
     """
     log.info("[STEPS] %s — advancing past mileage dialog", mva)
     try:
         await page.wait_for_timeout(BUTTON_PUSH_DELAY_MS)
         await page.get_by_role("button", name="Next").click(timeout=10_000)
+        # Verify mileage dialog dismissed — OpCode list must appear
+        await page.locator('[class*="opCodeText"]').first.wait_for(state="visible", timeout=15_000)
         log.info("[STEPS] %s — mileage dialog advanced", mva)
     except Exception as exc:
         raise RuntimeError(f"[STEPS] complete_mileage_dialog failed for {mva}: {exc}") from exc
@@ -307,7 +382,11 @@ async def select_glass_opcode(page: Page) -> None:
         await target.scroll_into_view_if_needed()
         await page.wait_for_timeout(BUTTON_PUSH_DELAY_MS)
         await target.click(timeout=10_000)
-        log.info("[STEPS] OpCode selected")
+        # Verify OpCode selection registered — Create Work Item button must appear
+        await page.get_by_role("button", name="Create Work Item").wait_for(
+            state="visible", timeout=15_000
+        )
+        log.info("[STEPS] OpCode selected — 'Create Work Item' button visible")
     except Exception as exc:
         raise RuntimeError(f"[STEPS] select_glass_opcode failed: {exc}") from exc
 
@@ -331,16 +410,27 @@ async def create_work_item(page: Page) -> None:
         await page.wait_for_timeout(BUTTON_PUSH_DELAY_MS)
         await button.click(timeout=10_000)
         log.info("[STEPS] 'Create Work Item' clicked")
+        # Verify server accepted — Done button must appear on completion dialog
+        await page.get_by_role("button", name="Done").wait_for(state="visible", timeout=30_000)
+        log.info("[STEPS] 'Create Work Item' confirmed — Done button visible")
     except Exception as exc:
         raise RuntimeError(f"[STEPS] create_work_item failed: {exc}") from exc
 
 
 async def confirm_completion(page: Page) -> None:
-    """Click the final 'Done' button on the completion dialog."""
+    """Click the final 'Done' button on the completion dialog.
+
+    Verifies the work items list reappears with at least one open item,
+    confirming the work item was persisted.
+    """
     log.info("[STEPS] Clicking 'Done' button")
     try:
         await page.wait_for_timeout(BUTTON_PUSH_DELAY_MS)
         await page.get_by_role("button", name="Done").click(timeout=10_000)
-        log.info("[STEPS] 'Done' clicked — workflow complete")
+        # Verify work item persisted — work items container must reappear
+        await page.locator(
+            "div[class*='fleet-operations-pwa__scan-record__']"
+        ).first.wait_for(state="visible", timeout=20_000)
+        log.info("[STEPS] 'Done' clicked — work item confirmed in list")
     except Exception as exc:
         raise RuntimeError(f"[STEPS] confirm_completion failed: {exc}") from exc

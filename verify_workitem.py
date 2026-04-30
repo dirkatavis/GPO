@@ -25,6 +25,7 @@ import sys
 import os
 import csv
 import argparse
+import time
 
 from core.driver_manager import create_driver, quit_driver
 from config.config_loader import get_config
@@ -39,6 +40,7 @@ RESULT_FOUND = "found"
 RESULT_NOT_FOUND = "not_found"
 RESULT_NAV_FAILED = "nav_failed"
 RESULT_ERROR = "error"
+RESULT_TIMEOUT = "timeout"
 
 
 def _load_csv(path: str) -> list[dict]:
@@ -86,9 +88,23 @@ def main():
     parser.add_argument(
         "--no-pause",
         action="store_true",
-        help="Do not prompt for Enter before browser close",
+        help="Deprecated: no-op kept for backward compatibility (default is non-blocking)",
+    )
+    parser.add_argument(
+        "--pause",
+        action="store_true",
+        help="Prompt for Enter before closing the browser (opt-in)",
+    )
+    parser.add_argument(
+        "--timeout-seconds",
+        type=int,
+        default=90,
+        help="Per-MVA timeout in seconds for verification flow (default: 90)",
     )
     args = parser.parse_args()
+
+    if args.timeout_seconds <= 0:
+        parser.error("--timeout-seconds must be greater than 0")
 
     if not args.mva and not args.csv_path:
         parser.error("Provide a single MVA positional argument or --csv <path>")
@@ -96,7 +112,8 @@ def main():
         parser.error("Provide either a single MVA or --csv, not both")
 
     agentic_env = os.getenv("GLASS_AGENTIC", "").strip().lower() in {"1", "true", "yes"}
-    should_pause = sys.stdin.isatty() and not args.no_pause and not agentic_env
+    # Non-blocking by default: only pause when explicitly requested.
+    should_pause = sys.stdin.isatty() and args.pause and not agentic_env
 
     # Build list of (mva, work_item_type) tuples
     if args.csv_path:
@@ -122,6 +139,13 @@ def main():
     results: list[dict] = []
 
     try:
+        # Bound Selenium-level waits so verification cannot hang indefinitely.
+        try:
+            driver.set_page_load_timeout(args.timeout_seconds)
+            driver.set_script_timeout(args.timeout_seconds)
+        except Exception as e:
+            log.warning(f"[VERIFY] Could not apply Selenium timeouts: {e}")
+
         # Login once
         login_flow = LoginFlow(driver)
         login_result = login_flow.login_handler(username, password, login_id)
@@ -132,22 +156,40 @@ def main():
         log.info("[VERIFY] Login OK")
 
         # Warm up Compass once
-        if not warmup_compass(driver):
+        warmup_timeout = min(30, args.timeout_seconds)
+        if not warmup_compass(driver, timeout=warmup_timeout):
             log.error("[VERIFY] Compass warm-up failed — aborting")
             _capture_screenshot(driver, "warmup_failure", "batch")
             sys.exit(1)
 
         for mva, work_item_type in targets:
             log.info(f"[VERIFY] Checking MVA {mva} for open '{work_item_type}' work item...")
+            mva_started = time.monotonic()
 
-            if not navigate_to_mva(driver, mva):
+            def timed_out() -> bool:
+                return (time.monotonic() - mva_started) > args.timeout_seconds
+
+            nav_timeout = min(30, args.timeout_seconds)
+            if not navigate_to_mva(driver, mva, timeout=nav_timeout):
                 log.error(f"[VERIFY] {mva} — navigation failed, skipping")
                 _capture_screenshot(driver, "nav_failure", mva)
                 results.append({"mva": mva, "type": work_item_type, "result": RESULT_NAV_FAILED})
                 continue
 
+            if timed_out():
+                log.error(f"[VERIFY] {mva} — timed out after {args.timeout_seconds}s before work item check")
+                _capture_screenshot(driver, "timeout", mva)
+                results.append({"mva": mva, "type": work_item_type, "result": RESULT_TIMEOUT})
+                continue
+
             try:
                 found = check_existing_work_item(driver, mva, work_item_type=work_item_type)
+                if timed_out():
+                    log.error(f"[VERIFY] {mva} — timed out after {args.timeout_seconds}s during work item check")
+                    _capture_screenshot(driver, "timeout", mva)
+                    results.append({"mva": mva, "type": work_item_type, "result": RESULT_TIMEOUT})
+                    continue
+
                 if found:
                     log.info(f"[VERIFY] {mva} — ✓ FOUND: open '{work_item_type}' work item confirmed")
                     _capture_screenshot(driver, "found", mva)
@@ -173,12 +215,14 @@ def main():
     # Summary
     found_count = sum(1 for r in results if r["result"] == RESULT_FOUND)
     not_found_count = sum(1 for r in results if r["result"] == RESULT_NOT_FOUND)
-    failed_count = sum(1 for r in results if r["result"] in {RESULT_NAV_FAILED, RESULT_ERROR})
+    timeout_count = sum(1 for r in results if r["result"] == RESULT_TIMEOUT)
+    failed_count = sum(1 for r in results if r["result"] in {RESULT_NAV_FAILED, RESULT_ERROR, RESULT_TIMEOUT})
 
     log.info(f"[VERIFY] {'=' * 50}")
     log.info(f"[VERIFY] VERIFICATION SUMMARY — {len(results)} MVA(s)")
     log.info(f"[VERIFY]   ✓ Found:     {found_count}")
     log.info(f"[VERIFY]   ✗ Not found: {not_found_count}")
+    log.info(f"[VERIFY]   ⏱ Timeout:   {timeout_count}")
     log.info(f"[VERIFY]   ! Failed:    {failed_count}")
     log.info(f"[VERIFY] {'=' * 50}")
     for r in results:

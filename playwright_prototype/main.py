@@ -22,6 +22,8 @@ from playwright_prototype.config import (
 )
 from playwright_prototype.session import ensure_attached_context, ensure_profile_context
 from playwright_prototype.steps import (
+    ExistingWorkItemError,
+    check_existing_glass_work_item,
     click_add_work_item,
     complete_mileage_dialog,
     confirm_completion,
@@ -143,6 +145,7 @@ async def process_mva(page, mva: str, location: str, action: str, step_delay_ms:
             await page.wait_for_timeout(step_delay_ms)
 
     await navigate_to_mva(page, mva);                                        await delay()
+    await check_existing_glass_work_item(page, mva);                         await delay()
     await click_add_work_item(page, mva);                                    await delay()
     await handle_complaint_dialog(page, mva, location, action, step_delay_ms); await delay()
     await complete_mileage_dialog(page, mva);                                await delay()
@@ -228,15 +231,16 @@ async def main(
                     await page.pause()
 
                 await step(navigate_to_mva(page, mva),                          "Step 1: navigated to MVA")
-                await step(click_add_work_item(page, mva),                       "Step 2: Add Work Item clicked")
-                await step(handle_complaint_dialog(page, mva, location, action, step_delay_ms), "Step 3: complaint dialog handled")
-                await step(complete_mileage_dialog(page, mva),                   "Step 4: mileage dialog advanced")
-                await step(select_glass_opcode(page),                            "Step 5: Glass opcode selected")
-                await step(create_work_item(page),                               "Step 6: Create Work Item clicked")
-                await step(confirm_completion(page),                             "Step 7: Done clicked — work item created")
+                await step(check_existing_glass_work_item(page, mva),            "Step 2: pre-check no existing glass work item")
+                await step(click_add_work_item(page, mva),                       "Step 3: Add Work Item clicked")
+                await step(handle_complaint_dialog(page, mva, location, action, step_delay_ms), "Step 4: complaint dialog handled")
+                await step(complete_mileage_dialog(page, mva),                   "Step 5: mileage dialog advanced")
+                await step(select_glass_opcode(page),                            "Step 6: Glass opcode selected")
+                await step(create_work_item(page),                               "Step 7: Create Work Item clicked")
+                await step(confirm_completion(page),                             "Step 8: Done clicked — work item created")
                 return 0
 
-            summary = {"processed": 0, "created": 0, "failed": 0}
+            summary = {"processed": 0, "created": 0, "skipped": 0, "failed": 0}
             for row in rows:
                 mva = row["mva"]
                 summary["processed"] += 1
@@ -244,12 +248,15 @@ async def main(
                     await process_mva(page, mva, row["location"], row["action"], step_delay_ms)
                     summary["created"] += 1
                     log.info("[MAIN] %s — work item created", mva)
+                except ExistingWorkItemError as exc:
+                    summary["skipped"] += 1
+                    log.warning("[MAIN] %s — skipped: %s", mva, exc)
                 except Exception:
                     log.exception("[MAIN] %s — failed", mva)
                     summary["failed"] += 1
 
-            log.info("Run complete — processed=%d created=%d failed=%d",
-                     summary["processed"], summary["created"], summary["failed"])
+            log.info("Run complete — processed=%d created=%d skipped=%d failed=%d",
+                     summary["processed"], summary["created"], summary["skipped"], summary["failed"])
             return 0 if summary["failed"] == 0 else 1
 
         except Exception:
