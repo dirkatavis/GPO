@@ -105,7 +105,7 @@ def _log_summary(results: list[dict]) -> tuple[int, int]:
 
 
 def _run_selenium_verification(args: argparse.Namespace, targets: list[tuple[str, str]], should_pause: bool) -> list[dict]:
-    """Current Selenium verification flow (kept as default backend)."""
+    """Legacy Selenium verification flow (retained for fallback; default is now playwright)."""
     username = os.getenv("GLASS_LOGIN_USERNAME") or get_config("username")
     password = os.getenv("GLASS_LOGIN_PASSWORD") or get_config("password")
     login_id = os.getenv("GLASS_LOGIN_ID") or get_config("login_id")
@@ -205,7 +205,7 @@ async def _playwright_find_work_item(page: "Page", work_item_type: str) -> bool:
 
 
 async def _run_playwright_verification_async(args: argparse.Namespace, targets: list[tuple[str, str]]) -> list[dict]:
-    """Playwright verification backend (opt-in during migration)."""
+    """Playwright verification backend (default)."""
     results: list[dict] = []
     headless = resolve_headless()
     edge_user_data_dir = resolve_edge_user_data_dir()
@@ -309,8 +309,8 @@ def main() -> None:
     parser.add_argument(
         "--backend",
         choices=["selenium", "playwright"],
-        default=(os.getenv("GLASS_VERIFY_BACKEND", "selenium").strip().lower() or "selenium"),
-        help="Verification backend (default: selenium; set GLASS_VERIFY_BACKEND=playwright to opt in)",
+        default=(os.getenv("GLASS_VERIFY_BACKEND", "playwright").strip().lower() or "playwright"),
+        help="Verification backend (default: playwright; set GLASS_VERIFY_BACKEND=selenium to use legacy backend)",
     )
 
     args = parser.parse_args()

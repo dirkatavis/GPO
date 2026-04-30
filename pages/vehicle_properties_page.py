@@ -29,6 +29,6 @@ class VehiclePropertiesPage:
                 )
             except Exception:
                 log.error(
-                    "[MVA][ERROR] echoed value not found (looked for last8='{last8}')"
+                    f"[MVA][ERROR] echoed value not found (looked for last8='{last8}')"
                 )
                 return None
