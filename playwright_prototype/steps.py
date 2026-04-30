@@ -179,7 +179,7 @@ async def click_add_work_item(page: Page, mva: str) -> None:
             '[class*="fleet-operations-pwa__complaintContainer__"]'
             ', [class*="fleet-operations-pwa__complaintItem__"]'
             ', [class*="fleet-operations-pwa__addComplaint__"]'
-        ).first.wait_for(state="visible", timeout=15_000)
+        ).first.wait_for(state="visible", timeout=30_000)
         log.info("[STEPS] %s — 'Add Work Item' clicked — complaint dialog opened", mva)
     except Exception as exc:
         raise RuntimeError(f"[STEPS] click_add_work_item failed for {mva}: {exc}") from exc
