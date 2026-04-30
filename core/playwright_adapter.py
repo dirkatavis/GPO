@@ -65,9 +65,66 @@ class PlaywrightElement:
     def click(self) -> None:
         self._locator.click()
 
+    # Selenium unicode private-use codepoints → Playwright key names
+    _SELENIUM_SPECIAL_KEYS = {
+        "\ue003": "Backspace", "\ue004": "Tab", "\ue006": "Enter",
+        "\ue007": "Enter", "\ue008": "Shift", "\ue009": "Control",
+        "\ue00a": "Alt", "\ue00c": "Escape", "\ue00d": "Space",
+        "\ue00e": "PageUp", "\ue00f": "PageDown", "\ue010": "End",
+        "\ue011": "Home", "\ue012": "ArrowLeft", "\ue013": "ArrowUp",
+        "\ue014": "ArrowRight", "\ue015": "ArrowDown", "\ue017": "Delete",
+        "\ue031": "F1", "\ue032": "F2", "\ue033": "F3", "\ue034": "F4",
+        "\ue035": "F5", "\ue036": "F6", "\ue037": "F7", "\ue038": "F8",
+        "\ue039": "F9", "\ue03a": "F10", "\ue03b": "F11", "\ue03c": "F12",
+        "\ue000": None,  # Null — releases modifiers
+    }
+    _MODIFIER_KEYS = {"Shift", "Control", "Alt", "Meta"}
+
+    def _tokenize(self, value: str):
+        """Yield (type, payload) tokens: ('text', str) or ('key', str)."""
+        buf = []
+        for ch in value:
+            key = self._SELENIUM_SPECIAL_KEYS.get(ch, ch if ord(ch) < 0xe000 or ord(ch) > 0xe0ff else "")
+            if ch in self._SELENIUM_SPECIAL_KEYS:
+                if buf:
+                    yield ("text", "".join(buf))
+                    buf = []
+                if key:  # None means Null (release modifiers)
+                    yield ("key", key)
+                else:
+                    yield ("null", "")
+            else:
+                buf.append(ch)
+        if buf:
+            yield ("text", "".join(buf))
+
     def send_keys(self, *values: str) -> None:
-        """Fill the element.  Joins multiple values like Selenium does."""
-        self._locator.fill("".join(str(v) for v in values))
+        """Type into the element using Playwright keyboard semantics.
+
+        Preserves existing content (unlike fill()) and handles Selenium
+        special-key chords such as CONTROL+A / DELETE.
+        """
+        self._locator.click()
+        active_mods: list[str] = []
+        for raw in values:
+            for tok_type, tok_val in self._tokenize(str(raw)):
+                if tok_type == "null":
+                    active_mods.clear()
+                elif tok_type == "key":
+                    if tok_val in self._MODIFIER_KEYS:
+                        if tok_val not in active_mods:
+                            active_mods.append(tok_val)
+                    else:
+                        chord = "+".join(active_mods + [tok_val]) if active_mods else tok_val
+                        self._locator.press(chord)
+                        active_mods.clear()
+                else:  # text
+                    if active_mods:
+                        for ch in tok_val:
+                            self._locator.press("+".join(active_mods + [ch]))
+                        active_mods.clear()
+                    else:
+                        self._locator.type(tok_val)
 
     def clear(self) -> None:
         self._locator.clear()

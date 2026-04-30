@@ -32,32 +32,32 @@ def create_driver() -> PlaywrightUiDriver:
         headless = os.getenv("CGI_HEADLESS", "0").strip().lower() in {"1", "true", "yes", "on"}
         log.info(f"[DRIVER] Launching Edge via Playwright (headless={headless})")
         
-        browser = pw.chromium.launch(
-            channel="msedge",
-            headless=headless,
-        )
-        _STATE["browser"] = browser
-        
-        # Create persistent context with Edge user data dir
         user_data_dir = None
         profile_dir = "Default"
-        
+
         if not os.getenv("GLASS_EDGE_NO_PROFILE", "0").strip().lower() in {"1", "true", "yes"}:
             local_app_data = os.getenv("LOCALAPPDATA", "").strip()
             if local_app_data:
                 user_data_dir = os.path.join(local_app_data, "Microsoft", "Edge", "User Data")
                 profile_dir = os.getenv("GLASS_EDGE_PROFILE_DIRECTORY", "Default").strip() or "Default"
                 log.info(f"[DRIVER] Using Edge profile: user_data_dir={user_data_dir}, profile={profile_dir}")
-        
-        # Create context (with or without persistent user data)
+
+        # Use launch_persistent_context when a profile dir is available so the
+        # real Edge profile (cookies, SSO tokens) is picked up.  Fall back to
+        # a plain launch + new_context when no profile path exists.
         if user_data_dir and os.path.exists(user_data_dir):
-            context = browser.new_context(
+            context = pw.chromium.launch_persistent_context(
+                user_data_dir,
                 channel="msedge",
-                storage_state=None,  # Will use real profile instead
+                headless=headless,
+                args=[f"--profile-directory={profile_dir}"],
             )
+            _STATE["browser"] = None
         else:
+            browser = pw.chromium.launch(channel="msedge", headless=headless)
+            _STATE["browser"] = browser
             context = browser.new_context()
-        
+
         _STATE["context"] = context
         
         page = context.new_page()

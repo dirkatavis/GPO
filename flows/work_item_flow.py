@@ -31,7 +31,7 @@ def get_work_items(driver, mva: str):
         )
         log.info(f"[WORKITEMS] {mva} - collected {len(tiles)} open work item(s)")
         for t in tiles:
-            log.info(f"[DBG] {mva} - tile text = {t.text!r}")
+            log.debug(f"[DBG] {mva} - tile text = {t.text!r}")
         return tiles
     except NoSuchElementException as e:
         log.warning(f"[WORKITEM][WARN] {mva} - could not collect work items -> {e}")

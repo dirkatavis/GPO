@@ -99,9 +99,15 @@ async def _playwright_smoke(mva: str, do_create: bool, location: str, action: st
                 log.info("[SMOKE] CHECK ONLY mode — stopping here. Run with --create to test creation.")
                 return
 
-            # Step 4: Create work item
+            # Step 4: Create work item.
+            # process_mva() repeats navigation + precheck internally; we do not
+            # duplicate those steps here to avoid unnecessary page churn.
             log.info("[SMOKE] Step 4 — Creating glass work item for %s...", mva)
-            await process_mva(page, mva, location=location, action=action, step_delay_ms=step_delay_ms)
+            try:
+                await process_mva(page, mva, location=location, action=action, step_delay_ms=step_delay_ms)
+            except ExistingWorkItemError:
+                log.info("[SMOKE] SKIP — work item appeared between check and create")
+                return
             log.info("[SMOKE] %s", "=" * 50)
             log.info("[SMOKE] SUCCESS — work item created for %s", mva)
             log.info("[SMOKE] %s", "=" * 50)

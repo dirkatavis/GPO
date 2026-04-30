@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import argparse
 import asyncio
@@ -121,7 +121,7 @@ def _log_summary(results: list[dict]) -> tuple[int, int]:
     log.info("[VERIFY]   ! Failed:    %d", failed_count)
     log.info("[VERIFY] %s", "=" * 50)
     for r in results:
-        status_icon = "?" if r["result"] == RESULT_FOUND else ("?" if r["result"] == RESULT_NOT_FOUND else "!")
+        status_icon = "+" if r["result"] == RESULT_FOUND else ("-" if r["result"] == RESULT_NOT_FOUND else "!")
         detail = r.get("detail", "")
         detail_suffix = f"  ({detail})" if detail else ""
         log.info("[VERIFY]   %s  %12s  [%s]  ?  %s%s", status_icon, r["mva"], r["type"], r["result"], detail_suffix)

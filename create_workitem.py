@@ -56,7 +56,7 @@ def _build_create_targets(args) -> list[dict]:
             log.error("[CREATE] CSV file not found: %s", csv_path)
             sys.exit(1)
 
-        with open(csv_path) as f:
+        with open(csv_path, newline="", encoding="utf-8") as f:
             reader = csv.DictReader(f)
             if not reader.fieldnames or "mva" not in reader.fieldnames:
                 log.error("[CREATE] CSV missing required 'mva' column")
@@ -140,24 +140,15 @@ async def _run_playwright_creation_async(targets: list[dict]) -> None:
                 try:
                     log.info("[CREATE] Processing MVA %s (location=%s, action=%s)...", mva, location, action)
 
-                    # Navigate to MVA
-                    await pw_navigate_to_mva(page, mva)
-
-                    # Check for existing work item
+                    # process_mva() performs navigation, precheck, and creation.
+                    # ExistingWorkItemError is raised if a work item already exists.
                     try:
-                        await check_existing_glass_work_item(page, mva)
-                        existing = False
+                        await process_mva(page, mva, location=location, action=action, step_delay_ms=step_delay_ms)
                     except ExistingWorkItemError:
-                        existing = True
-
-                    if existing:
                         log.info("[CREATE] %s — SKIP: existing work item found", mva)
                         skipped_count += 1
                         continue
 
-                    # Create work item
-                    log.info("[CREATE] %s — Creating work item...", mva)
-                    await process_mva(page, mva, location=location, action=action, step_delay_ms=step_delay_ms)
                     log.info("[CREATE] %s — ✓ Created", mva)
                     created_count += 1
 

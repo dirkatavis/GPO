@@ -48,6 +48,12 @@ if "%SYNC_DEPS%"=="1" (
     echo [ERROR] Failed to install requirements from %REQ_FILE%
     exit /b 1
   )
+  echo [BOOTSTRAP] Installing Playwright browsers ...
+  "%VENV_PY%" -m playwright install
+  if errorlevel 1 (
+    echo [ERROR] Failed to install Playwright browsers
+    exit /b 1
+  )
   if defined REQ_HASH (
     > "%REQ_STAMP%" echo !REQ_HASH!
   )

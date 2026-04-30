@@ -48,6 +48,12 @@ if "%SYNC_DEPS%"=="1" (
     echo [ERROR] Failed to install requirements from %REQ_FILE%
     exit /b 1
   )
+  echo [BOOTSTRAP] Installing Playwright browsers ...
+  "%VENV_PY%" -m playwright install
+  if errorlevel 1 (
+    echo [ERROR] Failed to install Playwright browsers
+    exit /b 1
+  )
   if defined REQ_HASH (
     > "%REQ_STAMP%" echo !REQ_HASH!
   )
@@ -90,7 +96,7 @@ if defined CREATE_FLAG (
 
 set "GLASS_AGENTIC=1"
 set "GLASS_EDGE_NO_PROFILE=1"
-"%VENV_PY%" smoke_test_workitem.py --csv "%CSV_PATH%" %CREATE_FLAG% --no-pause
+"%VENV_PY%" create_workitem.py --csv "%CSV_PATH%" %CREATE_FLAG%
 
 echo.
 echo Exit code: %errorlevel%
