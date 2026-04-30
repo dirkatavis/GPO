@@ -27,7 +27,7 @@ def get_work_items(driver, mva: str):
         # Get all open work item tiles (not just glass)
         tiles = driver.find_elements(
             By.XPATH,
-            "//div[contains(@class, 'fleet-operations-pwa__scan-record__') and .//div[contains(@class, 'fleet-operations-pwa__scan-record-header-title-right__') and normalize-space()='Open']]"
+            "//div[contains(@class, 'fleet-operations-pwa__scan-record__') and .//div[contains(@class, 'fleet-operations-pwa__scan-record-header-title-right__') and contains(normalize-space(), 'Open')]]"
         )
         log.info(f"[WORKITEMS] {mva} - collected {len(tiles)} open work item(s)")
         for t in tiles:
