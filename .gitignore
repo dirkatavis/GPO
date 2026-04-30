@@ -34,4 +34,5 @@ Thumbs.db
 
 # Logs
 log/*.log
+log/*.png
 !log/.gitkeep
