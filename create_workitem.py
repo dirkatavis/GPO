@@ -100,6 +100,7 @@ async def _run_playwright_creation_async(targets: list[dict]) -> None:
     log.info("[CREATE] %s", "=" * 50)
     log.info("[CREATE] Work item creation - %d MVA(s)", len(targets))
     log.info("[CREATE] Backend: playwright")
+    log.info("[CREATE] Profile: %s", edge_profile_directory)
     log.info("[CREATE] %s", "=" * 50)
 
     created_count = 0
