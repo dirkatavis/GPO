@@ -7,10 +7,8 @@ import os
 import re
 import sys
 import time
-from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-from config.config_loader import get_config
 from utils.logger import log
 
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
@@ -42,14 +40,24 @@ _GLASS_PATTERN = re.compile(r"glass|windshield|crack|chip|window", re.I)
 
 def _load_csv(path: str) -> list[dict]:
     """Return rows from a CSV with at minimum an 'mva' column."""
+    if not os.path.exists(path):
+        log.error("[CLOSE] CSV file not found: %s", path)
+        sys.exit(1)
     with open(path, newline="", encoding="utf-8") as f:
-        return [row for row in csv.DictReader(f) if row.get("mva", "").strip()]
+        reader = csv.DictReader(f)
+        if not reader.fieldnames or "mva" not in reader.fieldnames:
+            log.error("[CLOSE] CSV missing required 'mva' column: %s", path)
+            sys.exit(1)
+        return [row for row in reader if row.get("mva", "").strip()]
 
 
 def _build_targets(args: argparse.Namespace) -> list[str]:
     if args.csv_path:
         rows = _load_csv(args.csv_path)
         targets = [r["mva"].strip() for r in rows]
+        if not targets:
+            log.error("[CLOSE] No valid MVAs found in %s", args.csv_path)
+            sys.exit(1)
         log.info("[CLOSE] Loaded %d MVA(s) from %s", len(targets), args.csv_path)
         return targets
     return [args.mva.strip()]

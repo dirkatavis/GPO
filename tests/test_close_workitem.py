@@ -101,6 +101,33 @@ class TestLogSummary:
         assert failed == 2
 
 
+class TestBuildTargetsValidation:
+    def _args(self, csv_path):
+        ns = argparse.Namespace()
+        ns.mva = None
+        ns.csv_path = csv_path
+        return ns
+
+    def test_missing_file_exits(self, tmp_path):
+        """Non-existent CSV path must exit with an error, not raise FileNotFoundError."""
+        with pytest.raises(SystemExit):
+            cw._build_targets(self._args(str(tmp_path / "missing.csv")))
+
+    def test_csv_without_mva_column_exits(self, tmp_path):
+        """CSV missing the 'mva' column must exit with a clear error."""
+        f = tmp_path / "bad.csv"
+        f.write_text("vehicle,action\n11111111,Replace\n")
+        with pytest.raises(SystemExit):
+            cw._build_targets(self._args(str(f)))
+
+    def test_empty_csv_exits(self, tmp_path):
+        """CSV with header but no data rows must exit rather than silently succeed."""
+        f = tmp_path / "empty.csv"
+        f.write_text("mva\n")
+        with pytest.raises(SystemExit):
+            cw._build_targets(self._args(str(f)))
+
+
 # ─── E2E smoke test (opt-in) ─────────────────────────────────────────────────
 
 _RUN_E2E = os.getenv("GLASS_RUN_E2E_TESTS", "").strip().lower() in {"1", "true", "yes"}

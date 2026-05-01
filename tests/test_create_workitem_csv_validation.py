@@ -78,13 +78,14 @@ class TestLocationValidation:
         targets = _build_create_targets(_make_args(csv))
         assert len(targets) == 1
 
-    def test_invalid_location_error_message_names_the_bad_value(self, tmp_path, capsys):
-        """The error output must include the invalid location so the user knows what to fix."""
+    def test_invalid_location_error_message_names_the_bad_value(self, tmp_path, caplog):
+        """The error log must name the invalid location so the user knows what to fix."""
+        import logging
         from create_workitem import _build_create_targets
 
         csv = _write_csv(tmp_path, ["59000001,BB,Replace"])
-        with pytest.raises(SystemExit):
-            _build_create_targets(_make_args(csv))
+        with caplog.at_level(logging.ERROR):
+            with pytest.raises(SystemExit):
+                _build_create_targets(_make_args(csv))
 
-        captured = capsys.readouterr()
-        assert "BB" in captured.out or "BB" in captured.err or True  # logged via log.error
+        assert "BB" in caplog.text
