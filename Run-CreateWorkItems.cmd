@@ -62,34 +62,32 @@ if "%SYNC_DEPS%"=="1" (
 )
 
 rem ---------------------------------------------------------------------------
-rem  Verify that open work items exist for MVAs listed in a CSV.
+rem  Create open glass work items for MVAs listed in a CSV.
 rem
 rem  Usage:
-rem    Run-VerifyWorkItems.cmd                             -- uses sample_mvas.csv, type=GLASS
-rem    Run-VerifyWorkItems.cmd "data\my_mvas.csv"          -- custom CSV, type=GLASS
-rem    Run-VerifyWorkItems.cmd "data\my_mvas.csv" GLASS    -- explicit type keyword
-rem    Run-VerifyWorkItems.cmd "data\my_mvas.csv" "Glass Replacement"
-rem    Run-VerifyWorkItems.cmd "data\my_mvas.csv" "Glass Repair"
+rem    Run-CreateWorkItems.cmd                        -- uses data\workitems_today.csv
+rem    Run-CreateWorkItems.cmd "data\my_mvas.csv"     -- custom CSV
+rem
+rem  CSV format: mva,location,action
+rem    location defaults to WS if omitted
+rem    action defaults to Replace if omitted (use Repair for r-suffix MVAs)
 rem
 rem  Exit code:
-rem    0 = all MVAs have the specified open work item
-rem    1 = one or more MVAs missing the work item or failed
+rem    0 = all MVAs created or skipped (existing work item found)
+rem    1 = one or more MVAs failed
 rem ---------------------------------------------------------------------------
 
 set "CSV_PATH=playwright_prototype\sample_mvas.csv"
-set "TYPE_FILTER=GLASS"
 
 if not "%~1"=="" set "CSV_PATH=%~1"
-if not "%~2"=="" set "TYPE_FILTER=%~2"
 
 if not exist "%CSV_PATH%" (
   echo [ERROR] CSV file not found: %CSV_PATH%
-  echo Usage: Run-VerifyWorkItems.cmd [csv_path] [type_filter]
+  echo Usage: Run-CreateWorkItems.cmd [csv_path]
   exit /b 1
 )
 
-echo Verifying work items in: %CSV_PATH%
-echo Type filter: %TYPE_FILTER%
+echo Creating glass work items from: %CSV_PATH%
 
 echo [PRE-LAUNCH] Terminating any running Edge instances...
 taskkill /F /IM msedge.exe /T 2>nul
@@ -97,7 +95,7 @@ timeout /t 2 /nobreak >nul
 
 set "GLASS_AGENTIC=1"
 set "GLASS_EDGE_NO_PROFILE=1"
-"%VENV_PY%" verify_workitem.py --csv "%CSV_PATH%" --type "%TYPE_FILTER%" --no-pause
+"%VENV_PY%" create_workitem.py --csv "%CSV_PATH%" --backend playwright
 
 echo.
 echo Exit code: %errorlevel%

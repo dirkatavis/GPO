@@ -146,6 +146,12 @@ async def enter_wwid(page: Page, login_id: str) -> Page:
             await final_page.wait_for_load_state("domcontentloaded")
             log.info("[LOGIN] WWID submit opened a new tab")
         except Exception:
+            # No new tab — check if same-tab navigation already consumed the Submit click
+            try:
+                await submit_btn.wait_for(state="visible", timeout=2_000)
+            except Exception:
+                log.info("[LOGIN] WWID submit navigated in same tab — skipping second click")
+                return final_page
             await page.wait_for_timeout(BUTTON_PUSH_DELAY_MS)
             await submit_btn.click(timeout=10_000)
 

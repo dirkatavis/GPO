@@ -19,6 +19,15 @@ from pathlib import Path
 
 from utils.logger import log
 
+VALID_GLASS_LOCATIONS = {
+    "WS", "WINDSHIELD", "FRONT",           # windshield
+    "FLD", "FRD", "RLD", "RRD",            # door windows
+    "FLV", "FRV",                           # vent windows
+    "BW",                                   # back window
+    "SR",                                   # sunroof
+    "RLQ", "RRQ", "FRW",                   # quarter / front right window
+}
+
 from playwright.async_api import async_playwright
 from playwright_prototype.config import (
     resolve_edge_profile_directory,
@@ -70,6 +79,13 @@ def _build_create_targets(args) -> list[dict]:
                     continue
 
                 location = row.get("location", "WS").strip() or "WS"
+                if location.upper() not in VALID_GLASS_LOCATIONS:
+                    log.error(
+                        "[CREATE] Row %d: invalid location '%s' — must be a glass area code "
+                        "(e.g. WS, BW, FLD). Lot codes like BB or APO are not valid here.",
+                        i, location,
+                    )
+                    sys.exit(1)
                 action = _resolve_row_work_item_action(row, default_action)
 
                 targets.append({
@@ -100,6 +116,7 @@ async def _run_playwright_creation_async(targets: list[dict]) -> None:
     log.info("[CREATE] %s", "=" * 50)
     log.info("[CREATE] Work item creation - %d MVA(s)", len(targets))
     log.info("[CREATE] Backend: playwright")
+    log.info("[CREATE] Profile: %s", edge_profile_directory)
     log.info("[CREATE] %s", "=" * 50)
 
     created_count = 0
