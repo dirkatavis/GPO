@@ -20,7 +20,7 @@ import smtplib
 import subprocess
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import getaddresses
@@ -368,9 +368,12 @@ def _extract_internaldate_from_fetch_response(msg_data: list[tuple[bytes, bytes]
             continue
 
         try:
-            return datetime.strptime(match.group(1).decode("ascii"), "%d-%b-%Y %H:%M:%S %z")
-        except (UnicodeDecodeError, ValueError):
-            return None
+            # imaplib.Internaldate2tuple is locale-independent; strptime %b is not.
+            t = imaplib.Internaldate2tuple(match.group(0))
+            if t is not None:
+                return datetime(*t[:6], tzinfo=timezone.utc)
+        except Exception:
+            continue
 
     return None
 
@@ -669,9 +672,6 @@ def _extract_arrival_date_from_type(type_value: str | None, fallback_date: datet
 
     month = int(strict.group(1))
     day = int(strict.group(2))
-
-    if month is None or day is None:
-        return fallback
 
     try:
         return datetime(fallback_date.year, month, day).strftime("%m/%d/%Y")
@@ -993,9 +993,10 @@ def _build_duplicate_key(mva: object, arrival_date: object) -> str:
 
 def _filter_new_rows(df: pd.DataFrame, existing_keys: set[str]) -> pd.DataFrame:
     """Return only rows not already present in the sheet (MVA|Arrival Date key)."""
-    keys = df.apply(lambda row: _build_duplicate_key(row["MVA"], row["Arrival Date"]), axis=1)
-    df_with_keys = df.assign(_key=keys)
-    return df_with_keys[~df_with_keys["_key"].isin(existing_keys)].drop(columns=["_key"]).copy()
+    mva_series = df["MVA"].astype(str).str.strip()
+    date_series = df["Arrival Date"].astype(str).map(_normalize_arrival_date_key)
+    keys = mva_series + "|" + date_series
+    return df[~keys.isin(existing_keys)].copy()
 
 
 def _find_insert_row(ws) -> int:
