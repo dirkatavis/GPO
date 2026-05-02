@@ -268,7 +268,11 @@ class InboundEmail:
         return self.body_text or self.body_html
 
     @classmethod
-    def from_message(cls, msg: email.message.Message) -> "InboundEmail":
+    def from_message(
+        cls,
+        msg: email.message.Message,
+        fallback_sent_at: datetime | None = None,
+    ) -> "InboundEmail":
         """Build a parsed email object from a MIME message."""
         body_text, body_html = _extract_message_bodies(msg)
         from_addresses = _extract_header_addresses(msg.get_all("From", []))
@@ -277,7 +281,7 @@ class InboundEmail:
             from_address=from_addresses[0] if from_addresses else "",
             to_addresses=to_addresses,
             subject=msg.get("Subject", ""),
-            sent_at=_parse_email_datetime(msg.get("Date", "")),
+            sent_at=_parse_email_datetime(msg.get("Date", ""), fallback_sent_at=fallback_sent_at),
             body_text=body_text,
             body_html=body_html,
         )
@@ -310,8 +314,8 @@ def fetch_input_descriptions() -> tuple[list[tuple[str, str]], datetime]:
             return [], datetime.now()
 
         log.info("Input: Found %d unseen message(s)", len(unseen_ids))
-        latest_message = _fetch_message_by_id(mail, unseen_ids[-1])
-        return _extract_descriptions_from_message(latest_message)
+        latest_message, internal_sent_at = _fetch_message_by_id(mail, unseen_ids[-1])
+        return _extract_descriptions_from_message(latest_message, fallback_sent_at=internal_sent_at)
 
     finally:
         try:
@@ -337,21 +341,48 @@ def _find_unseen_message_ids(mail: imaplib.IMAP4_SSL) -> list[bytes]:
     return msg_ids[0].split()
 
 
-def _fetch_message_by_id(mail: imaplib.IMAP4_SSL, message_id: bytes) -> email.message.Message:
-    """Fetch and decode a single RFC822 message by IMAP id."""
-    status, msg_data = mail.fetch(message_id, "(RFC822)")
+def _fetch_message_by_id(mail: imaplib.IMAP4_SSL, message_id: bytes) -> tuple[email.message.Message, datetime | None]:
+    """Fetch and decode a single message and best-effort IMAP INTERNALDATE."""
+    status, msg_data = mail.fetch(message_id, "(RFC822 INTERNALDATE)")
     if status != "OK" or not msg_data or not msg_data[0]:
         raise RuntimeError(f"Failed to fetch message id {message_id}")
 
+    internal_sent_at = _extract_internaldate_from_fetch_response(msg_data)
     raw_email = msg_data[0][1]
     if not raw_email:
         raise RuntimeError(f"Empty message payload for id {message_id}")
-    return email.message_from_bytes(raw_email)
+    return email.message_from_bytes(raw_email), internal_sent_at
 
 
-def _extract_descriptions_from_message(msg: email.message.Message) -> tuple[list[tuple[str, str]], datetime]:
+def _extract_internaldate_from_fetch_response(msg_data: list[tuple[bytes, bytes] | bytes]) -> datetime | None:
+    """Extract IMAP INTERNALDATE from FETCH metadata when present."""
+    for item in msg_data:
+        if not isinstance(item, tuple) or not item:
+            continue
+        meta = item[0]
+        if not isinstance(meta, bytes):
+            continue
+
+        match = re.search(rb'INTERNALDATE "([^"]+)"', meta)
+        if not match:
+            continue
+
+        try:
+            return datetime.strptime(match.group(1).decode("ascii"), "%d-%b-%Y %H:%M:%S %z")
+        except (UnicodeDecodeError, ValueError):
+            return None
+
+    return None
+
+
+def _extract_descriptions_from_message(
+    msg: email.message.Message,
+    fallback_sent_at: datetime | None = None,
+) -> tuple[list[tuple[str, str]], datetime]:
     """Extract parsed (type_value, description) tuples and parsed email datetime from a MIME message."""
-    return _extract_descriptions_from_email(InboundEmail.from_message(msg))
+    return _extract_descriptions_from_email(
+        InboundEmail.from_message(msg, fallback_sent_at=fallback_sent_at)
+    )
 
 
 def _extract_descriptions_from_email(parsed_email: InboundEmail) -> tuple[list[tuple[str, str]], datetime]:
@@ -367,14 +398,25 @@ def _extract_descriptions_from_email(parsed_email: InboundEmail) -> tuple[list[t
     return descriptions, parsed_email.sent_at
 
 
-def _parse_email_datetime(date_str: str) -> datetime:
-    """Parse email Date header into datetime, falling back to current time."""
-    if not date_str:
-        return datetime.now()
-    try:
-        return email.utils.parsedate_to_datetime(date_str)
-    except (TypeError, ValueError):
-        return datetime.now()
+def _parse_email_datetime(date_str: str, fallback_sent_at: datetime | None = None) -> datetime:
+    """Parse email Date header with deterministic fallback behavior.
+
+    Resolution order:
+      1) RFC822 Date header.
+      2) IMAP INTERNALDATE (if supplied by caller).
+
+    Raises ValueError if neither source can provide a valid timestamp.
+    """
+    if date_str:
+        try:
+            return email.utils.parsedate_to_datetime(date_str)
+        except (TypeError, ValueError):
+            pass
+
+    if fallback_sent_at is not None:
+        return fallback_sent_at
+
+    raise ValueError("Email timestamp unavailable: Date header missing/invalid and no INTERNALDATE fallback")
 
 
 def _extract_header_addresses(header_values: list[str]) -> list[str]:
@@ -607,6 +649,37 @@ def _extract_location_from_type(type_value: str | None) -> str:
     return LOCATION
 
 
+def _extract_arrival_date_from_type(type_value: str | None, fallback_date: datetime) -> str:
+    """Extract Arrival Date from Type MMDD prefix, else use fallback date.
+
+    Examples:
+      - '0502APO' -> '05/02/<fallback year>'
+      - missing/invalid MMDD -> fallback_date formatted as MM/DD/YYYY
+    """
+    fallback = fallback_date.strftime("%m/%d/%Y")
+    if not type_value:
+        return fallback
+
+    cleaned = type_value.strip().upper()
+
+    # Strict schema: MMDD + location suffix (APO|BB), e.g. 0502APO.
+    strict = re.match(r"^(\d{2})(\d{2})(APO|BB)$", cleaned)
+    if not strict:
+        return fallback
+
+    month = int(strict.group(1))
+    day = int(strict.group(2))
+
+    if month is None or day is None:
+        return fallback
+
+    try:
+        return datetime(fallback_date.year, month, day).strftime("%m/%d/%Y")
+    except ValueError:
+        log.warning("Parsing: INVALID_TYPE_DATE — type='%s'", type_value)
+        return fallback
+
+
 def _split_non_empty_lines(raw_text: str) -> list[str]:
     """Split text by lines and return only non-empty trimmed lines."""
     return [line.strip() for line in raw_text.splitlines() if line.strip()]
@@ -641,13 +714,13 @@ def parse_descriptions_to_manifest(descriptions: list[tuple[str, str]], email_da
 
     manifest: dict[str, dict] = {}
     mva_list: list[str] = []
-    date_str = email_date.strftime("%m/%d/%Y")
     missing_type_count = 0
     default_work_item = RUNTIME_CONFIG.get("work_item_default_flag", "verified")
 
     for type_value, desc in descriptions:
         raw = desc.strip()
         location = _extract_location_from_type(type_value)
+        arrival_date = _extract_arrival_date_from_type(type_value, email_date)
         if not type_value:
             missing_type_count += 1
 
@@ -677,7 +750,7 @@ def parse_descriptions_to_manifest(descriptions: list[tuple[str, str]], email_da
         claim = "Listed" if claim_flag else "Missing"
 
         manifest[mva] = {
-            "Arrival Date": date_str,
+            "Arrival Date": arrival_date,
             "MVA": mva,
             "FPO#": "",      # Manually maintained — pipeline writes blank
             "VIN": "",       # Populated during merge step
@@ -887,9 +960,41 @@ def persist_new_rows(df: pd.DataFrame) -> pd.DataFrame:
     return new_rows
 
 
+def _normalize_arrival_date_key(value: object) -> str:
+    """Normalize arrival dates to a canonical key-safe format.
+
+    Converts common month/day/year strings (with or without zero padding) to
+    ISO date format so idempotency comparisons are stable across Google Sheets
+    display formatting differences.
+    """
+    raw = str(value).strip()
+    if not raw:
+        return ""
+
+    # Accept only explicit formats to avoid locale-dependent ambiguity.
+    parse_formats = (
+        "%m/%d/%Y",
+        "%Y-%m-%d",
+        "%Y-%m-%d %H:%M:%S",
+    )
+    for fmt in parse_formats:
+        try:
+            return datetime.strptime(raw, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+
+    return raw
+
+
+def _build_duplicate_key(mva: object, arrival_date: object) -> str:
+    """Build a normalized MVA|Arrival Date idempotency key."""
+    return f"{str(mva).strip()}|{_normalize_arrival_date_key(arrival_date)}"
+
+
 def _filter_new_rows(df: pd.DataFrame, existing_keys: set[str]) -> pd.DataFrame:
     """Return only rows not already present in the sheet (MVA|Arrival Date key)."""
-    df_with_keys = df.assign(_key=df["MVA"] + "|" + df["Arrival Date"])
+    keys = df.apply(lambda row: _build_duplicate_key(row["MVA"], row["Arrival Date"]), axis=1)
+    df_with_keys = df.assign(_key=keys)
     return df_with_keys[~df_with_keys["_key"].isin(existing_keys)].drop(columns=["_key"]).copy()
 
 
@@ -942,7 +1047,7 @@ def _load_existing_keys(ws) -> set[str]:
             if len(row) > max(mva_idx, date_idx) and row[mva_idx].strip():
                 mva = row[mva_idx].strip()
                 arrival_date = row[date_idx].strip()
-                key = f"{mva}|{arrival_date}"
+                key = _build_duplicate_key(mva, arrival_date)
                 existing_keys.add(key)
     except (AttributeError, KeyError, TypeError, ValueError, OSError) as exc:
         log.warning("Could not read existing sheet data — %s", exc)
@@ -952,7 +1057,7 @@ def _load_existing_keys(ws) -> set[str]:
 
 def is_duplicate(mva: str, date: str, existing_keys: set[str]) -> bool:
     """Return True if the MVA+Date composite key already exists."""
-    return f"{mva}|{date}" in existing_keys
+    return _build_duplicate_key(mva, date) in existing_keys
 
 
 # ─── Notification ─────────────────────────────────────────────────────────────

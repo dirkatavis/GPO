@@ -254,6 +254,20 @@ class TestIT4_SpreadsheetPersistence:
         ws.insert_rows.assert_not_called()
 
     @patch("GlassOrchestrator._get_worksheet")
+    def test_idempotency_normalizes_date_format(self, mock_get_ws):
+        """Sheet date '5/2/2026' should match incoming '05/02/2026'."""
+        existing = [["5/2/2026", "59193750", "", "KNDPU3DG9T7301521",
+                     "KIA SPORTAGE 2WD", "APO", "Replace(AGN)", "Windshield", "Listed", "verified"]]
+        ws = self._mock_worksheet(existing)
+        mock_get_ws.return_value = ws
+
+        df = self._make_test_df(["59193750"], date="05/02/2026")
+        new_rows = persist_new_rows(df)
+
+        assert len(new_rows) == 0
+        ws.insert_rows.assert_not_called()
+
+    @patch("GlassOrchestrator._get_worksheet")
     def test_correct_columns_written(self, mock_get_ws):
         """Verify all 9 columns match the expected schema."""
         ws = self._mock_worksheet()
