@@ -20,7 +20,9 @@ from GlassOrchestrator import (
     _load_local_config_overrides,
     _load_runtime_config,
     _extract_body,
+    _extract_internaldate_from_fetch_response,
     _extract_location_from_type,
+    _parse_email_datetime,
     _parse_html_descriptions,
     notify_order_items,
     is_duplicate,
@@ -332,9 +334,9 @@ class TestUT3_Idempotency:
     """Verify the duplicate-detection logic using MVA+Date composite keys."""
 
     MOCK_EXISTING = {
-        "59340120|03/05/2026",
-        "59340121|03/05/2026",
-        "59340122|03/04/2026",
+        "59340120|2026-03-05",
+        "59340121|2026-03-05",
+        "59340122|2026-03-04",
     }
 
     def test_duplicate_returns_true(self):
@@ -348,6 +350,9 @@ class TestUT3_Idempotency:
 
     def test_empty_existing_returns_false(self):
         assert is_duplicate("59340120", "03/05/2026", set()) is False
+
+    def test_non_padded_date_matches_existing_key(self):
+        assert is_duplicate("59340120", "3/5/2026", self.MOCK_EXISTING) is True
 
 
 # ─── UT-4: Sanitization ──────────────────────────────────────────────────────
@@ -494,6 +499,38 @@ class TestUT5_LocalConfigOverrides:
         assert merged["email_account"] == "shared@company.com"
 
 
+# ─── UT-5b: Email Datetime Resolution ──────────────────────────────────────
+
+
+class TestUT5b_EmailDatetimeResolution:
+    """Validate deterministic timestamp resolution for inbound email parsing."""
+
+    def test_parse_email_datetime_uses_internaldate_fallback_when_header_missing(self):
+        fallback = datetime(2026, 5, 2, 13, 45, 0)
+        assert _parse_email_datetime("", fallback_sent_at=fallback) == fallback
+
+    def test_parse_email_datetime_uses_internaldate_fallback_when_header_invalid(self):
+        fallback = datetime(2026, 5, 2, 13, 45, 0)
+        assert _parse_email_datetime("not-a-date", fallback_sent_at=fallback) == fallback
+
+    def test_parse_email_datetime_raises_when_no_valid_source(self):
+        with pytest.raises(ValueError, match="timestamp unavailable"):
+            _parse_email_datetime("not-a-date")
+
+    def test_extract_internaldate_from_fetch_response(self):
+        msg_data = [
+            (
+                b'123 (RFC822 {42} INTERNALDATE "02-May-2026 15:30:00 +0000")',
+                b"Subject: Test\r\n\r\nBody",
+            )
+        ]
+        parsed = _extract_internaldate_from_fetch_response(msg_data)
+        assert parsed is not None
+        assert parsed.year == 2026
+        assert parsed.month == 5
+        assert parsed.day == 2
+
+
 # ─── UT-6: Notification Payload ─────────────────────────────────────────────
 
 
@@ -596,3 +633,31 @@ class TestUT7_LocationExtraction:
             [("0305BB", "59340120WS")], datetime(2026, 3, 5)
         )
         assert manifest["59340120"]["Location"] == "BB"
+
+    def test_manifest_uses_type_mmdd_for_arrival_date(self):
+        """Type '0502APO' should drive Arrival Date to 05/02/current year."""
+        manifest, _ = parse_descriptions_to_manifest(
+            [("0502APO", "59340120WS")], datetime(2026, 5, 1)
+        )
+        assert manifest["59340120"]["Arrival Date"] == "05/02/2026"
+
+    def test_manifest_type_invalid_date_falls_back_to_email_date(self):
+        """Invalid Type MMDD (e.g. 0230) should fall back to email Date header day."""
+        manifest, _ = parse_descriptions_to_manifest(
+            [("0230APO", "59340120WS")], datetime(2026, 5, 1)
+        )
+        assert manifest["59340120"]["Arrival Date"] == "05/01/2026"
+
+    def test_manifest_type_slash_date_is_rejected_and_falls_back(self):
+        """Slash format is invalid; parser should fall back to email Date header day."""
+        manifest, _ = parse_descriptions_to_manifest(
+            [("05/02APO", "59340120WS")], datetime(2026, 5, 1)
+        )
+        assert manifest["59340120"]["Arrival Date"] == "05/01/2026"
+
+    def test_manifest_type_letter_o_in_date_is_rejected_and_falls_back(self):
+        """Strict MMDD requires digits; letter O typo should fall back to email date."""
+        manifest, _ = parse_descriptions_to_manifest(
+            [("05O2APO", "59340120WS")], datetime(2026, 5, 1)
+        )
+        assert manifest["59340120"]["Arrival Date"] == "05/01/2026"
