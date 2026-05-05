@@ -49,6 +49,7 @@ STATUS_TECHNICIAN_ASSIGNED = "Technician Assigned"
 STATUS_APPROVAL_NEEDED = "Approval Needed"
 STATUS_COMPLETED = "Completed"
 STATUS_NEEDS_REVIEW = "Needs Review"
+RESOLVED_STATUSES = {"completed", "resolved", "closed"}
 
 # Precedence order: higher index wins. Completed is terminal.
 # Needs Review is the lowest real-status rank so any subsequent vendor
@@ -121,9 +122,19 @@ class VendorSheetUpdater:
 
     def connect(self) -> None:
         """Authenticate and open the target worksheet."""
-        gc = gspread.service_account(filename=self._service_account_json)
-        sh = gc.open_by_key(self._spreadsheet_id)
-        self._ws = sh.worksheet(self._sheet_name)
+        try:
+            gc = gspread.service_account(filename=self._service_account_json)
+            sh = gc.open_by_key(self._spreadsheet_id)
+            self._ws = sh.worksheet(self._sheet_name)
+        except PermissionError as exc:
+            raise RuntimeError(
+                "Google Sheets access denied (403). Share the target spreadsheet with the "
+                "service account in Service_account.json, or verify the spreadsheet ID is correct."
+            ) from exc
+        except Exception as exc:
+            raise RuntimeError(
+                f"Could not open worksheet '{self._sheet_name}' in spreadsheet '{self._spreadsheet_id}': {type(exc).__name__}: {exc}"
+            ) from exc
         log.info("Connected to sheet '%s' (%s)", self._sheet_name, self._spreadsheet_id)
         self._refresh_cache()
 
@@ -205,6 +216,42 @@ class VendorSheetUpdater:
             f"VIN {norm_vin} + {norm_date} matched {len(matching_rows)} rows"
         )
 
+    def has_unique_resolved_vin(self, vin: str) -> bool:
+        """Return True when VIN maps to exactly one row and that row is resolved."""
+        norm_vin = normalize_vin_for_match(vin)
+        if not norm_vin:
+            return False
+
+        vin_col = self._col_index("VIN")
+        if vin_col is None:
+            return False
+
+        matching_rows = [
+            row_idx
+            for row_idx, row in enumerate(self._all_values[1:], start=2)
+            if len(row) >= vin_col and normalize_vin_for_match(row[vin_col - 1]) == norm_vin
+        ]
+        if len(matching_rows) != 1:
+            return False
+
+        return self.is_row_resolved(matching_rows[0])
+
+    def is_row_resolved(self, row_index: int) -> bool:
+        """Return True if the row's Repair Status indicates a resolved lifecycle state."""
+        repair_status_col = self._col_index("Repair Status")
+        if repair_status_col is None:
+            return False
+
+        if row_index < 1 or row_index > len(self._all_values):
+            return False
+
+        row_data = self._all_values[row_index - 1]
+        if len(row_data) < repair_status_col:
+            return False
+
+        current_status = row_data[repair_status_col - 1].strip().lower()
+        return current_status in RESOLVED_STATUSES
+
     # ─── Row updates ─────────────────────────────────────────────────────────
 
     def update_vendor_fields(self, row_index: int, fields: dict[str, Any]) -> None:
@@ -219,6 +266,13 @@ class VendorSheetUpdater:
             fields:    Dict of {column_name: value} to write.
         """
         # Enforce Repair Status precedence before writing
+        if row_index < 1 or row_index > len(self._all_values):
+            log.error(
+                "update_vendor_fields: row_index %d out of range (sheet has %d rows) — skipping write",
+                row_index, len(self._all_values),
+            )
+            return
+
         if "Repair Status" in fields:
             repair_status_col = self._col_index("Repair Status")
             if repair_status_col is not None:
@@ -267,6 +321,14 @@ class VendorSheetUpdater:
         ]
 
         if len(matching_rows) == 1:
+            if self.is_row_resolved(matching_rows[0]):
+                log.info(
+                    "Skipping needs-review write for VIN %s — row %d already resolved",
+                    vin,
+                    matching_rows[0],
+                )
+                return
+
             self.update_vendor_fields(matching_rows[0], {
                 "Repair Status": STATUS_NEEDS_REVIEW,
                 "Repair Status Notes": note,

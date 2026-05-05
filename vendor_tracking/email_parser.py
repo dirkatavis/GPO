@@ -14,6 +14,7 @@ import email as email_module
 import email.message
 import quopri
 import re
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 from dataclasses import dataclass
 from enum import Enum, auto
@@ -183,13 +184,21 @@ def extract_job_id_from_zeta_href(href: str) -> Optional[str]:
 
 
 def _extract_job_id_via_redirect(href: str) -> Optional[str]:
-    """Resolve click redirect and extract JobId from the final URL when present."""
+    """Resolve click redirect and extract JobId from the final URL when present.
+
+    Only follows URLs with scheme=https and netloc=e.e.autoglassnow.com to
+    prevent unintended outbound requests.
+    """
     try:
+        parsed = urlparse(href)
+        if parsed.scheme != "https" or parsed.netloc != "e.e.autoglassnow.com":
+            return None
         req = Request(
             href,
             headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+            method="HEAD",
         )
-        with urlopen(req, timeout=10) as resp:  # nosec B310 - vendor URL from email
+        with urlopen(req, timeout=10) as resp:  # nosec B310 - URL strictly validated above
             final_url = resp.geturl()
     except Exception:
         return None
