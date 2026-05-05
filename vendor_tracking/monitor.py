@@ -49,10 +49,7 @@ from vendor_tracking.email_parser import (
 from vendor_tracking.idempotency_store import IdempotencyStore
 from vendor_tracking.sheet_updater import (
     VendorSheetUpdater,
-    STATUS_SCHEDULED,
     STATUS_APPROVAL_NEEDED,
-    STATUS_TECHNICIAN_ASSIGNED,
-    VENDOR_TRACKING_COLUMNS,
 )
 
 # ─── Logging ──────────────────────────────────────────────────────────────────
@@ -75,12 +72,16 @@ log = logging.getLogger("vendor_tracking.monitor")
 
 # ─── Config loading ───────────────────────────────────────────────────────────
 _ORCHESTRATOR_CONFIG_PATH = BASE_DIR / "orchestrator_config.json"
+_ORCHESTRATOR_PROJECT_CONFIG_PATH = BASE_DIR / "orchestrator_project.json"
+_ORCHESTRATOR_PROJECT_LOCAL_CONFIG_PATH = BASE_DIR / "orchestrator_project.local.json"
 _ORCHESTRATOR_LOCAL_CONFIG_PATH = BASE_DIR / "orchestrator_config.local.json"
-_SERVICE_ACCOUNT_JSON = BASE_DIR / "Service_account.json"
 
 
 def _load_config() -> dict:
-    """Load orchestrator config with local overrides applied."""
+    """Load orchestrator config merging all config layers in the same order as
+    GlassOrchestrator.py: base → project → project.local → orchestrator.local.
+    Service account path is read from config (service_account_json key).
+    """
     def _read(path: Path, required: bool) -> dict:
         if not path.exists():
             if required:
@@ -94,9 +95,14 @@ def _load_config() -> dict:
             log.warning("Config load failed for %s: %s", path, exc)
             return {}
 
-    base = _read(_ORCHESTRATOR_CONFIG_PATH, required=True)
-    overrides = _read(_ORCHESTRATOR_LOCAL_CONFIG_PATH, required=False)
-    merged = {**base, **overrides}
+    merged: dict = {}
+    for path, required in [
+        (_ORCHESTRATOR_CONFIG_PATH, True),
+        (_ORCHESTRATOR_PROJECT_CONFIG_PATH, False),
+        (_ORCHESTRATOR_PROJECT_LOCAL_CONFIG_PATH, False),
+        (_ORCHESTRATOR_LOCAL_CONFIG_PATH, False),
+    ]:
+        merged.update(_read(path, required))
     return merged
 
 
@@ -186,6 +192,12 @@ class VendorTrackingMonitor:
         self._store = IdempotencyStore(self._idempotency_path)
         self._updater: Optional[VendorSheetUpdater] = None
 
+    def _service_account_path(self) -> Path:
+        """Resolve the service account JSON path from config, relative to BASE_DIR."""
+        raw = str(self._config.get("service_account_json", "Service_account.json"))
+        path = Path(raw)
+        return path if path.is_absolute() else BASE_DIR / path
+
     def _validate_config(self) -> list[str]:
         """Return a list of configuration errors; empty list means config is valid."""
         errors = []
@@ -198,8 +210,9 @@ class VendorTrackingMonitor:
                 "vendor_tracking_spreadsheet_id is not set. "
                 "Add it to orchestrator_config.local.json pointing to the DEV sheet."
             )
-        if not _SERVICE_ACCOUNT_JSON.exists():
-            errors.append(f"Service account JSON not found: {_SERVICE_ACCOUNT_JSON}")
+        sa_path = self._service_account_path()
+        if not sa_path.exists():
+            errors.append(f"Service account JSON not found: {sa_path}")
         return errors
 
     # ─── Main entry point ────────────────────────────────────────────────────
@@ -219,7 +232,7 @@ class VendorTrackingMonitor:
         self._updater = VendorSheetUpdater(
             spreadsheet_id=self._spreadsheet_id,
             sheet_name=self._sheet_name,
-            service_account_json=str(_SERVICE_ACCOUNT_JSON),
+            service_account_json=str(self._service_account_path()),
         )
         try:
             self._updater.connect()
@@ -383,7 +396,7 @@ class VendorTrackingMonitor:
             summary.needs_review.append(f"[{match.status}] VIN={data.vin} | {match.note}")
             # Fallback: try VIN-only write for visibility
             self._updater.write_needs_review(
-                data.vin, received_date,
+                data.vin,
                 f"Approval needed (auto match failed: {match.note})",
             )
             # Still surface in approval_needed list so operator sees the blocker

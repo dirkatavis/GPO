@@ -14,10 +14,8 @@ VT-9:  Approval Needed blocker surfaced in run summary
 
 import base64
 import email as email_module
-import json
-import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, call
 
 import pytest
 
@@ -39,7 +37,6 @@ from vendor_tracking.sheet_updater import (
     STATUS_APPROVAL_NEEDED,
     STATUS_COMPLETED,
     STATUS_SCHEDULED,
-    VENDOR_TRACKING_COLUMNS,
 )
 
 

@@ -51,11 +51,13 @@ STATUS_COMPLETED = "Completed"
 STATUS_NEEDS_REVIEW = "Needs Review"
 
 # Precedence order: higher index wins. Completed is terminal.
+# Needs Review is the lowest real-status rank so any subsequent vendor
+# status update (Approval Needed, Technician Assigned, etc.) can overwrite it.
 _STATUS_PRECEDENCE = [
+    STATUS_NEEDS_REVIEW,
     STATUS_SCHEDULED,
     STATUS_TECHNICIAN_ASSIGNED,
     STATUS_APPROVAL_NEEDED,
-    STATUS_NEEDS_REVIEW,
     STATUS_COMPLETED,
 ]
 
@@ -241,7 +243,7 @@ class VendorSheetUpdater:
         # Refresh cache after writes so subsequent lookups are accurate
         self._refresh_cache()
 
-    def write_needs_review(self, vin: str, arrival_date: str, note: str) -> None:
+    def write_needs_review(self, vin: str, note: str) -> None:
         """Attempt a best-effort Repair Status Notes write when a row can be found by VIN only.
 
         If the VIN matches exactly one row (regardless of date), writes the note
