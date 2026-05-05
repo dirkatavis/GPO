@@ -26,6 +26,7 @@ import logging.config
 import os
 import re
 import sys
+import argparse
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -41,6 +42,7 @@ from vendor_tracking.email_parser import (
     ApprovalNeededEmailData,
     TechnicianAssignedEmailData,
     classify_email,
+    debug_extract_job_id_from_appointment_html,
     get_html_body,
     parse_appointment_email,
     parse_approval_needed_email,
@@ -133,13 +135,12 @@ def _connect_imap(imap_server: str, email_account: str, email_password: str) -> 
 def _search_vendor_emails(
     mail: imaplib.IMAP4_SSL,
     senders: list[str],
-    lookback_days: int,
+    since_date: str,
 ) -> list[bytes]:
-    """Return IMAP message IDs for AutoGlassNow emails within the lookback window.
+    """Return IMAP message IDs for AutoGlassNow emails since a given IMAP date.
 
     Searches ALL (not just UNSEEN) — idempotency is handled separately.
     """
-    since_date = (datetime.now(tz=timezone.utc) - timedelta(days=lookback_days)).strftime("%d-%b-%Y")
     all_ids: list[bytes] = []
     seen: set[bytes] = set()
 
@@ -172,7 +173,14 @@ def _fetch_message(mail: imaplib.IMAP4_SSL, imap_id: bytes) -> Optional[email_mo
 class VendorTrackingMonitor:
     """Fetch AutoGlassNow emails and update vendor tracking columns in GlassClaims."""
 
-    def __init__(self, config: dict) -> None:
+    def __init__(
+        self,
+        config: dict,
+        since_date: str | None = None,
+        ignore_idempotency: bool = False,
+        decision_log_path: str | None = None,
+        dry_run: bool = False,
+    ) -> None:
         self._config = config
 
         # IMAP credentials
@@ -185,12 +193,63 @@ class VendorTrackingMonitor:
         self._sheet_name = str(config.get("vendor_tracking_sheet_name", "GlassClaims"))
         self._senders: list[str] = list(config.get("vendor_tracking_senders", ["autoglassnow.com", "omegaedi.com"]))
         self._lookback_days = int(config.get("vendor_tracking_lookback_days", 30))
+        self._since_date = since_date or str(config.get("vendor_tracking_since_date", "")).strip()
+        self._ignore_idempotency = ignore_idempotency
+        self._dry_run = dry_run
+        decision_log_rel = decision_log_path or str(
+            config.get("vendor_tracking_decision_log", "data/vendor_tracking_decisions.jsonl")
+        )
+        decision_log_candidate = Path(decision_log_rel)
+        self._decision_log_path = (
+            decision_log_candidate
+            if decision_log_candidate.is_absolute()
+            else BASE_DIR / decision_log_candidate
+        )
 
         idempotency_rel = str(config.get("vendor_tracking_idempotency_store", "data/vendor_tracking_processed.json"))
         self._idempotency_path = BASE_DIR / idempotency_rel
 
         self._store = IdempotencyStore(self._idempotency_path)
         self._updater: Optional[VendorSheetUpdater] = None
+
+    @property
+    def _skip_idempotency_gate(self) -> bool:
+        """Return True when idempotency skip checks should be bypassed."""
+        return self._ignore_idempotency or self._dry_run
+
+    def _resolve_imap_since_date(self) -> str:
+        """Resolve the IMAP SINCE date in dd-Mon-YYYY format.
+
+        Priority order:
+          1) CLI --since-date value
+          2) config vendor_tracking_since_date
+          3) computed lookback_days from now
+        """
+        if self._since_date:
+            raw = self._since_date.strip()
+            for fmt in ("%m/%d/%Y", "%Y-%m-%d", "%m-%d-%Y"):
+                try:
+                    return datetime.strptime(raw, fmt).strftime("%d-%b-%Y")
+                except ValueError:
+                    continue
+            raise RuntimeError(
+                f"Invalid since date '{raw}'. Use MM/DD/YYYY (example: 05/04/2026)."
+            )
+
+        return (datetime.now(tz=timezone.utc) - timedelta(days=self._lookback_days)).strftime("%d-%b-%Y")
+
+    def _record_decision(self, **payload: object) -> None:
+        """Append one decision event to JSONL audit log."""
+        event = {
+            "ts_utc": datetime.now(tz=timezone.utc).isoformat(),
+            **payload,
+        }
+        try:
+            self._decision_log_path.parent.mkdir(parents=True, exist_ok=True)
+            with self._decision_log_path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(event, ensure_ascii=True) + "\n")
+        except OSError as exc:
+            log.warning("Decision log write failed (%s): %s", self._decision_log_path, exc)
 
     def _service_account_path(self) -> Path:
         """Resolve the service account JSON path from config, relative to BASE_DIR."""
@@ -236,10 +295,12 @@ class VendorTrackingMonitor:
         )
         try:
             self._updater.connect()
-            self._updater.ensure_columns()
+            if not self._dry_run:
+                self._updater.ensure_columns()
         except Exception as exc:
-            log.error("Failed to connect to Google Sheet: %s", exc)
-            summary.errors.append(str(exc))
+            error_text = str(exc) or f"{type(exc).__name__}"
+            log.error("Failed to connect to Google Sheet: %s", error_text)
+            summary.errors.append(error_text)
             return summary
 
         # Connect to IMAP
@@ -251,8 +312,9 @@ class VendorTrackingMonitor:
             return summary
 
         try:
-            imap_ids = _search_vendor_emails(mail, self._senders, self._lookback_days)
-            log.info("Found %d candidate vendor email(s) in the last %d days", len(imap_ids), self._lookback_days)
+            since_date = self._resolve_imap_since_date()
+            imap_ids = _search_vendor_emails(mail, self._senders, since_date)
+            log.info("Found %d candidate vendor email(s) since %s", len(imap_ids), since_date)
             summary.total_fetched = len(imap_ids)
 
             for imap_id in imap_ids:
@@ -280,9 +342,14 @@ class VendorTrackingMonitor:
             # Synthesize a pseudo-ID from From + Subject + Date to allow idempotency
             message_id = f"synthetic|{msg.get('From','')}|{subject}|{msg.get('Date','')}"
 
-        if self._store.is_processed(message_id):
+        if not self._skip_idempotency_gate and self._store.is_processed(message_id):
             log.debug("Skipping already-processed: %s", message_id)
             summary.skipped_idempotent += 1
+            self._record_decision(
+                message_id=message_id,
+                subject=subject,
+                decision="skip_idempotent",
+            )
             return
 
         email_type = classify_email(msg)
@@ -290,7 +357,14 @@ class VendorTrackingMonitor:
 
         if email_type == EmailType.UNKNOWN:
             summary.skipped_unknown += 1
-            self._store.mark_processed(message_id)
+            if not self._skip_idempotency_gate:
+                self._store.mark_processed(message_id)
+            self._record_decision(
+                message_id=message_id,
+                subject=subject,
+                email_type=email_type.name,
+                decision="skip_unknown",
+            )
             return
 
         html_body = get_html_body(msg)
@@ -305,14 +379,29 @@ class VendorTrackingMonitor:
             # COMPLETION_RECEIPT is Phase 4 — log and skip for now
             elif email_type == EmailType.COMPLETION_RECEIPT:
                 log.info("Completion receipt email deferred to Phase 4 — skipping: %s", subject)
-                self._store.mark_processed(message_id)
+                if not self._skip_idempotency_gate:
+                    self._store.mark_processed(message_id)
+                self._record_decision(
+                    message_id=message_id,
+                    subject=subject,
+                    email_type=email_type.name,
+                    decision="skip_phase4_deferred",
+                )
                 return
         except Exception as exc:
             log.error("Error processing message '%s': %s", subject, exc, exc_info=True)
             summary.errors.append(f"{subject}: {exc}")
+            self._record_decision(
+                message_id=message_id,
+                subject=subject,
+                email_type=email_type.name,
+                decision="error",
+                detail=str(exc),
+            )
             return
 
-        self._store.mark_processed(message_id)
+        if not self._skip_idempotency_gate:
+            self._store.mark_processed(message_id)
         summary.processed += 1
 
     # ─── Appointment confirmation ─────────────────────────────────────────────
@@ -325,23 +414,60 @@ class VendorTrackingMonitor:
         summary: RunSummary,
     ) -> None:
         data: AppointmentEmailData = parse_appointment_email(html)
+        debug_job_id, debug_meta = debug_extract_job_id_from_appointment_html(html)
         log.info(
             "Appointment — JobId: %s, Date: %s, Vehicle: %s",
             data.job_id, data.appointment_date, data.vehicle,
         )
 
-        # Appointment confirmation emails don't carry a VIN — they seed JobId.
-        # No VIN means no compound-key row match; we log the JobId for manual review.
-        # A future enhancement may correlate JobId to VIN via tracker polling.
+        # Appointment confirmation emails don't carry a VIN — they seed identifiers.
+        # New template often omits job-tracker URL but includes appointment reference.
+        if not data.job_id and data.appointment_ref:
+            log.info(
+                "Seeded appointment reference %s (no JobId in template) — row update deferred until VIN is available",
+                data.appointment_ref,
+            )
+            self._record_decision(
+                message_id=message_id,
+                subject=subject,
+                email_type=EmailType.APPOINTMENT_CONFIRMATION.name,
+                decision="seed_appointment_ref",
+                appointment_ref=data.appointment_ref,
+                appointment_date=data.appointment_date,
+                vehicle=data.vehicle or "",
+                debug_reason=debug_meta.get("reason", "unknown"),
+                href_preview=debug_meta.get("href_preview", ""),
+            )
+            return
+
+        # Legacy template path where no seed identifier can be extracted.
         if not data.job_id:
             log.warning("Appointment email has no extractable JobId — manual review needed: %s", subject)
             summary.needs_review.append(f"[No JobId] {subject}")
+            self._record_decision(
+                message_id=message_id,
+                subject=subject,
+                email_type=EmailType.APPOINTMENT_CONFIRMATION.name,
+                decision="needs_review_no_job_id",
+                debug_reason=debug_meta.get("reason", "unknown"),
+                href_preview=debug_meta.get("href_preview", ""),
+                debug_job_id=debug_job_id or "",
+            )
             return
 
         # Log the seeded job for visibility; no auto row update without VIN.
         log.info(
             "Seeded JobId %s (tracker: %s) — row update deferred until VIN is available",
             data.job_id, data.tracker_url,
+        )
+        self._record_decision(
+            message_id=message_id,
+            subject=subject,
+            email_type=EmailType.APPOINTMENT_CONFIRMATION.name,
+            decision="seed_job_id",
+            job_id=data.job_id,
+            tracker_url=data.tracker_url,
+            appointment_date=data.appointment_date,
         )
 
     # ─── Approval-needed ─────────────────────────────────────────────────────
@@ -359,9 +485,29 @@ class VendorTrackingMonitor:
         if not data.vin:
             log.warning("Approval-needed email has no parseable VIN — manual review needed: %s", subject)
             summary.needs_review.append(f"[No VIN] {subject}")
+            self._record_decision(
+                message_id=message_id,
+                subject=subject,
+                email_type=EmailType.APPROVAL_NEEDED.name,
+                decision="needs_review_no_vin",
+            )
             return
 
         assert self._updater is not None
+        if self._updater.has_unique_resolved_vin(data.vin):
+            log.info(
+                "Skipping approval-needed email for VIN %s — unique sheet row is already resolved",
+                data.vin,
+            )
+            self._record_decision(
+                message_id=message_id,
+                subject=subject,
+                email_type=EmailType.APPROVAL_NEEDED.name,
+                decision="skip_row_resolved",
+                vin=data.vin,
+            )
+            return
+
         # Approval-needed emails don't carry an Arrival Date directly.
         # We need to match by VIN and the date contained in the email or current date.
         # For the initial implementation, attempt match by VIN only (write_needs_review
@@ -385,9 +531,47 @@ class VendorTrackingMonitor:
             fields["Vendor Job Number"] = data.work_order_ref
 
         if match.is_ok:
+            if self._updater.is_row_resolved(match.row_index):  # type: ignore[arg-type]
+                log.info(
+                    "Skipping approval update for VIN %s — row %d already resolved",
+                    data.vin,
+                    match.row_index,
+                )
+                self._record_decision(
+                    message_id=message_id,
+                    subject=subject,
+                    email_type=EmailType.APPROVAL_NEEDED.name,
+                    decision="skip_row_resolved",
+                    vin=data.vin,
+                    row_index=match.row_index,
+                )
+                return
+
+            if self._dry_run:
+                summary.approval_needed.append(data.vin)
+                self._record_decision(
+                    message_id=message_id,
+                    subject=subject,
+                    email_type=EmailType.APPROVAL_NEEDED.name,
+                    decision="dry_run_would_update_row",
+                    vin=data.vin,
+                    row_index=match.row_index,
+                    fields=fields,
+                )
+                return
+
             self._updater.update_vendor_fields(match.row_index, fields)  # type: ignore[arg-type]
             summary.approval_needed.append(data.vin)
             log.warning(">>> APPROVAL NEEDED — VIN %s (row %d) <<<", data.vin, match.row_index)
+            self._record_decision(
+                message_id=message_id,
+                subject=subject,
+                email_type=EmailType.APPROVAL_NEEDED.name,
+                decision="updated_row",
+                vin=data.vin,
+                row_index=match.row_index,
+                fields=fields,
+            )
         else:
             log.warning(
                 "Approval-needed match failed (%s): %s — attempting VIN-only fallback",
@@ -395,12 +579,32 @@ class VendorTrackingMonitor:
             )
             summary.needs_review.append(f"[{match.status}] VIN={data.vin} | {match.note}")
             # Fallback: try VIN-only write for visibility
-            self._updater.write_needs_review(
-                data.vin,
-                f"Approval needed (auto match failed: {match.note})",
-            )
+            if self._dry_run:
+                self._record_decision(
+                    message_id=message_id,
+                    subject=subject,
+                    email_type=EmailType.APPROVAL_NEEDED.name,
+                    decision="dry_run_would_write_needs_review",
+                    vin=data.vin,
+                    match_status=match.status,
+                    match_note=match.note,
+                )
+            else:
+                self._updater.write_needs_review(
+                    data.vin,
+                    f"Approval needed (auto match failed: {match.note})",
+                )
             # Still surface in approval_needed list so operator sees the blocker
             summary.approval_needed.append(f"{data.vin} (needs review)")
+            self._record_decision(
+                message_id=message_id,
+                subject=subject,
+                email_type=EmailType.APPROVAL_NEEDED.name,
+                decision="needs_review_match_failure",
+                vin=data.vin,
+                match_status=match.status,
+                match_note=match.note,
+            )
 
     # ─── Technician assigned ─────────────────────────────────────────────────
 
@@ -416,6 +620,14 @@ class VendorTrackingMonitor:
         # Technician-assigned emails do not carry a VIN.
         # Provisional: log the event; manual update path during interim.
         log.info("Technician-assigned notice received — manual row update required (no VIN in this email type): %s", subject)
+        self._record_decision(
+            message_id=message_id,
+            subject=subject,
+            email_type=EmailType.TECHNICIAN_ASSIGNED.name,
+            decision="manual_update_required",
+            assigned_date=data.assigned_date,
+            tracker_url=data.tracker_url,
+        )
 
 
 # ─── Date helper ──────────────────────────────────────────────────────────────
@@ -471,8 +683,37 @@ def _print_summary(summary: RunSummary) -> None:
 # ─── Entry point ─────────────────────────────────────────────────────────────
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description="AutoGlassNow vendor tracking monitor")
+    parser.add_argument(
+        "--since-date",
+        help="Process vendor emails since this date (MM/DD/YYYY), e.g. 05/04/2026",
+    )
+    parser.add_argument(
+        "--ignore-idempotency",
+        action="store_true",
+        help="Reprocess emails even if their Message-ID already exists in the idempotency store",
+    )
+    parser.add_argument(
+        "--dry-run",
+        "--Dry_run",
+        dest="dry_run",
+        action="store_true",
+        help="Simulate conclusions without writing to the sheet or idempotency store",
+    )
+    parser.add_argument(
+        "--decision-log",
+        help="Path to JSONL decision log (default: data/vendor_tracking_decisions.jsonl)",
+    )
+    args = parser.parse_args()
+
     config = _load_config()
-    monitor = VendorTrackingMonitor(config)
+    monitor = VendorTrackingMonitor(
+        config,
+        since_date=args.since_date,
+        ignore_idempotency=args.ignore_idempotency,
+        decision_log_path=args.decision_log,
+        dry_run=args.dry_run,
+    )
     summary = monitor.run()
     _print_summary(summary)
     # Exit non-zero if there are unresolved errors

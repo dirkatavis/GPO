@@ -12,7 +12,9 @@ All parsing is best-effort; missing fields are returned as None.
 import base64
 import email as email_module
 import email.message
+import quopri
 import re
+from urllib.request import Request, urlopen
 from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Optional
@@ -117,6 +119,7 @@ class AppointmentEmailData:
     """Fields extracted from an AutoGlassNow appointment confirmation email."""
     job_id: Optional[str]           # Numeric JobId from VIEW STATUS href
     tracker_url: Optional[str]      # https://www.autoglassnow.com/job-tracker/<job_id>/
+    appointment_ref: Optional[str]  # New-template appointment reference (e.g. 05052026C1945616)
     appointment_date: Optional[str] # e.g. "05/06/2026"
     service_type: Optional[str]     # e.g. "Windshield Replacement"
     vehicle: Optional[str]          # e.g. "2026 Gmc Terrain"
@@ -153,12 +156,20 @@ def extract_job_id_from_zeta_href(href: str) -> Optional[str]:
 
     Returns the numeric JobId string, or None if extraction fails.
     """
-    for segment in href.split("/"):
+    # Normalize wrapped href values seen in real-world email source.
+    normalized_href = href.replace("=3D", "=")
+    normalized_href = re.sub(r"=\r?\n", "", normalized_href)
+    normalized_href = re.sub(r"\s+", "", normalized_href)
+
+    for segment in normalized_href.split("/"):
         if not segment or len(segment) < 2:
             continue
         if segment[0] != "V":
             continue
-        encoded = segment[1:]
+        # Keep only URL-safe base64 token characters; strip noise from wrapping.
+        encoded = re.sub(r"[^A-Za-z0-9_-]", "", segment[1:])
+        if not encoded:
+            continue
         # Pad to a valid base64 length
         padded = encoded + "=" * ((4 - len(encoded) % 4) % 4)
         try:
@@ -171,10 +182,79 @@ def extract_job_id_from_zeta_href(href: str) -> Optional[str]:
     return None
 
 
+def _extract_job_id_via_redirect(href: str) -> Optional[str]:
+    """Resolve click redirect and extract JobId from the final URL when present."""
+    try:
+        req = Request(
+            href,
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+        )
+        with urlopen(req, timeout=10) as resp:  # nosec B310 - vendor URL from email
+            final_url = resp.geturl()
+    except Exception:
+        return None
+
+    match = re.search(r"autoglassnow\.com/job-tracker/(\d+)", final_url)
+    if match:
+        return match.group(1)
+    return None
+
+
+def _extract_agn_reference_from_zeta_href(href: str) -> Optional[str]:
+    """Extract stable appointment reference from J/S click-url segments."""
+    normalized_href = href.replace("=3D", "=")
+    normalized_href = re.sub(r"=\r?\n", "", normalized_href)
+    normalized_href = re.sub(r"\s+", "", normalized_href)
+
+    candidate_from_s: Optional[str] = None
+
+    for segment in normalized_href.split("/"):
+        if not segment or len(segment) < 2:
+            continue
+
+        prefix = segment[0]
+        encoded = re.sub(r"[^A-Za-z0-9_-]", "", segment[1:])
+        if not encoded:
+            continue
+
+        padded = encoded + "=" * ((4 - len(encoded) % 4) % 4)
+        try:
+            decoded = base64.urlsafe_b64decode(padded).decode("utf-8", errors="replace")
+        except Exception:
+            continue
+
+        if prefix == "J":
+            m = re.search(r"\b(\d{8}[cC]\d{4,})\b", decoded)
+            if m:
+                return m.group(1).upper()
+
+        if prefix == "S":
+            m = re.search(r"(\d{8}[cC]\d{4,})", decoded)
+            if m:
+                candidate_from_s = m.group(1).upper()
+
+    return candidate_from_s
+
+
+def _normalize_email_html(html: str) -> str:
+    """Decode quoted-printable HTML when line-wrapped href values are present."""
+    if "=3D" not in html and not re.search(r"=\r?\n", html):
+        return html
+
+    try:
+        return quopri.decodestring(html.encode("utf-8", errors="ignore")).decode(
+            "utf-8", errors="replace"
+        )
+    except Exception:
+        return html
+
+
 def _find_view_status_href(html: str) -> Optional[str]:
     """Return the href of the VIEW STATUS anchor in appointment email HTML."""
+    normalized_html = _normalize_email_html(html)
+
     if _HAS_BS4:
-        soup = BeautifulSoup(html, "html.parser")
+        soup = BeautifulSoup(normalized_html, "html.parser")
         for anchor in soup.find_all("a", href=True):
             href: str = anchor["href"]
             if "e.e.autoglassnow.com/click" in href:
@@ -182,12 +262,54 @@ def _find_view_status_href(html: str) -> Optional[str]:
             text = anchor.get_text(strip=True).upper()
             if "VIEW STATUS" in text and href.startswith("http"):
                 return href
-    else:
-        # Regex fallback
-        m = re.search(r'href=["\']([^"\']*e\.e\.autoglassnow\.com/click[^"\']*)["\']', html, re.IGNORECASE)
+
+    # Regex fallback (always run): handles malformed attributes like
+    # href=\n="..." and quoted-printable fragments that survive HTML parsing.
+    patterns = [
+        r'href\s*=\s*["\']([^"\']*e\.e\.autoglassnow\.com/click[^"\']*)["\']',
+        r'href\s*=\s*=3D\s*["\']([^"\']*e\.e\.autoglassnow\.com/click[^"\']*)["\']',
+    ]
+    for pattern in patterns:
+        m = re.search(pattern, normalized_html, re.IGNORECASE | re.DOTALL)
         if m:
-            return m.group(1)
+            return m.group(1).strip()
+
+    # Last-chance scan against the original raw HTML (before normalization).
+    for pattern in patterns:
+        m = re.search(pattern, html, re.IGNORECASE | re.DOTALL)
+        if m:
+            candidate = m.group(1).strip()
+            try:
+                candidate = quopri.decodestring(candidate.encode("utf-8", errors="ignore")).decode(
+                    "utf-8", errors="replace"
+                )
+            except Exception:
+                pass
+            return candidate
+
     return None
+
+
+def debug_extract_job_id_from_appointment_html(html: str) -> tuple[Optional[str], dict[str, str]]:
+    """Extract JobId with debug metadata for operational decision logging."""
+    href = _find_view_status_href(html)
+    if not href:
+        return None, {
+            "reason": "href_not_found",
+            "href_preview": "",
+        }
+
+    job_id = extract_job_id_from_zeta_href(href)
+    preview = href[:220]
+    if job_id:
+        return job_id, {
+            "reason": "ok",
+            "href_preview": preview,
+        }
+    return None, {
+        "reason": "job_id_not_decoded",
+        "href_preview": preview,
+    }
 
 
 # ─── Appointment confirmation parsing ────────────────────────────────────────
@@ -255,10 +377,15 @@ def parse_appointment_email(html: str) -> AppointmentEmailData:
     href = _find_view_status_href(html)
     job_id: Optional[str] = None
     tracker_url: Optional[str] = None
+    appointment_ref: Optional[str] = None
     if href:
         job_id = extract_job_id_from_zeta_href(href)
+        if not job_id and "e.e.autoglassnow.com/click" in href:
+            job_id = _extract_job_id_via_redirect(href)
         if job_id:
             tracker_url = f"https://www.autoglassnow.com/job-tracker/{job_id}/"
+        else:
+            appointment_ref = _extract_agn_reference_from_zeta_href(href)
 
     # Strip HTML for field extraction
     if _HAS_BS4:
@@ -270,6 +397,7 @@ def parse_appointment_email(html: str) -> AppointmentEmailData:
     return AppointmentEmailData(
         job_id=job_id,
         tracker_url=tracker_url,
+        appointment_ref=appointment_ref,
         appointment_date=_extract_first_date(text),
         service_type=_extract_service_type(text),
         vehicle=_extract_vehicle(text),

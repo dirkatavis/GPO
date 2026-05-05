@@ -14,16 +14,19 @@ VT-9:  Approval Needed blocker surfaced in run summary
 
 import base64
 import email as email_module
+import json
 from pathlib import Path
 from unittest.mock import MagicMock, call
 
 import pytest
 
+import vendor_tracking.email_parser as email_parser
 from vendor_tracking.email_parser import (
     AppointmentEmailData,
     ApprovalNeededEmailData,
     EmailType,
     TechnicianAssignedEmailData,
+    _find_view_status_href,
     classify_email,
     extract_job_id_from_zeta_href,
     normalize_vin,
@@ -57,6 +60,30 @@ SAMPLE_ZETA_HREF = (
     f"/{_make_zeta_segment(SAMPLE_TRACKER_URL)}"
     "/Xdummy2"
 )
+
+REAL_QP_APPOINTMENT_HREF_SNIPPET = """
+<a href=
+=3D"https://e.e.autoglassnow.com/click?EZGlyay5hdmlzQGdtYWlsLmNvbQ/CeyJtaWQ=
+iOiIxNzc3OTgwNjgzMDA2YjYxNDVmZjkxY2VmIiwiY3QiOiJhdXRvLWdsYXNzLW5vdy1wcm9kLT=
+gxYjI2OTU5YzUyZDczYTZhMmE1MTVmODY4NjUxYmJkLTAiLCJyZCI6ImdtYWlsLmNvbSJ9/VaHR=
+0cHM6Ly93d3cuYXV0b2dsYXNzbm93LmNvbS9qb2ItdHJhY2tlci80NzIzNjQ0/SWkhfYXV0b2ds=
+YXNzX0ROVEFOMDUwNTIwMjZjMTk0NTYxNg/LZGQ1/qP3V0bV9jYW1wYWlnbj1BR05fQVVUT19BU=
+FBPSU5UTUVOVFJFUVVFU1RFRF9QSDZfTk9PRkZFUl9ORVdfMDBfVjNfQkFVJnV0bV9tZWRpdW09=
+ZW1haWwmdXRtX3NvdXJjZT16ZXRhJmJ0X3VzZXJfaWQ9YzZmd3BlTnB6Z0p6bW11JTJCMUx6Q21=
+ERXJKRlNJQk5vUjJGaSUyRnd6NFFmd1ZaZ2xRcGZ2WnB3bTZyZ1BtJTJGM0g1SkE4YnFoNnZ3aE=
+xGTEdjSVJWa0c5MVhvNm5IZzNVZm1mekNHekhlYiUyRlZ1dnRBNWM0MDRkZXByOUZQcHRVaCUyQ=
+kN3JmJ0X3RzPTE3Nzc5ODA2ODMwMDc/gafnVGg/JMDUwNTIwMjZDMTk0NTYxNg/sdo93186fe8"=
+ style=3D"border-collapse: collapse; mso-line-height-rule: exactly; text-de=
+coration: none;" data-location=3D"t5"><img src=3D"https://images.e.autoglas=
+snow.com/images/5faeaf6f9bb9a940e2aef81a3117cf46/a1f2bfd0421734229161004910=
+e6f824.jpg" width=3D"300" alt=3D"VIEW STATUS" border=3D"0"></a>
+"""
+
+MALFORMED_DECODED_APPOINTMENT_HREF_SNIPPET = """
+<a href=
+="https://e.e.autoglassnow.com/click?x/y/VaHR0cHM6Ly93d3cuYXV0b2dsYXNzbm93LmNvbS9qb2ItdHJhY2tlci80NzIzNjQ0/z"
+ style="text-decoration:none;"><img alt="VIEW STATUS"></a>
+"""
 
 APPOINTMENT_HTML = f"""
 <html><body>
@@ -155,6 +182,24 @@ class TestVT1_JobIdExtraction:
         href = f"https://e.e.autoglassnow.com/click/A/{_make_zeta_segment(tracker_url)}/B"
         assert extract_job_id_from_zeta_href(href) == "4689437"
 
+    def test_extracts_job_id_from_real_quoted_printable_href(self):
+        href = _find_view_status_href(REAL_QP_APPOINTMENT_HREF_SNIPPET)
+        assert href is not None
+        assert extract_job_id_from_zeta_href(href) == SAMPLE_JOB_ID
+
+    def test_extracts_job_id_from_malformed_decoded_href_attribute(self):
+        href = _find_view_status_href(MALFORMED_DECODED_APPOINTMENT_HREF_SNIPPET)
+        assert href is not None
+        assert extract_job_id_from_zeta_href(href) == SAMPLE_JOB_ID
+
+    def test_extracts_job_id_when_v_segment_contains_wrapping_noise(self):
+        noisy_href = (
+            "https://e.e.autoglassnow.com/click/A/"
+            "VaHR0cHM6Ly93d3cuYXV0b2dsYXNz\n"
+            " bm93LmNvbS9qb2ItdHJhY2tlci80NzIzNjQ0/S"
+        )
+        assert extract_job_id_from_zeta_href(noisy_href) == SAMPLE_JOB_ID
+
 
 # ─── VT-2: Appointment email body field extraction ────────────────────────────
 
@@ -186,6 +231,32 @@ class TestVT2_AppointmentParsing:
         result = parse_appointment_email(html)
         assert result.job_id is None
         assert result.tracker_url is None
+
+    def test_falls_back_to_redirect_resolution_when_v_segment_has_no_job_id(self, monkeypatch):
+        href = "https://e.e.autoglassnow.com/click/A/VaHR0cHM6Ly93d3cuYXV0b2dsYXNzbm93LmNvbS8/B"
+        html = f"<html><body><a href=\"{href}\">VIEW STATUS</a></body></html>"
+
+        monkeypatch.setattr(email_parser, "_extract_job_id_via_redirect", lambda _: "4723644")
+
+        result = parse_appointment_email(html)
+        assert result.job_id == "4723644"
+        assert result.tracker_url == "https://www.autoglassnow.com/job-tracker/4723644/"
+
+    def test_extracts_appointment_ref_when_job_id_is_unavailable(self, monkeypatch):
+        href = (
+            "https://e.e.autoglassnow.com/click/A/B/C/"
+            "VaHR0cHM6Ly93d3cuYXV0b2dsYXNzbm93LmNvbS8/"
+            "SZH_autoglass_DNTAN05052026c1945616/"
+            "JMDUwNTIwMjZDMTk0NTYxNg"
+        )
+        html = f"<html><body><a href=\"{href}\">VIEW STATUS</a></body></html>"
+
+        monkeypatch.setattr(email_parser, "_extract_job_id_via_redirect", lambda _: None)
+
+        result = parse_appointment_email(html)
+        assert result.job_id is None
+        assert result.tracker_url is None
+        assert result.appointment_ref == "05052026C1945616"
 
 
 # ─── VT-3: Approval-needed email parsing ─────────────────────────────────────
@@ -337,6 +408,33 @@ class TestVT6_UpdateVendorFields:
         for c in self.mock_ws.update_cell.call_args_list:
             assert c.args[2] != "value" or c.args[1] != 99
 
+    def test_is_row_resolved_true_for_completed(self):
+        headers = ["Arrival Date", "MVA", "VIN", "Repair Status"]
+        data_rows = [["05/01/2026", "12345678", "1HGBH41JXMN109186", STATUS_COMPLETED]]
+        updater, _ = _make_sheet_updater_with_mock(headers, data_rows)
+        assert updater.is_row_resolved(2) is True
+
+    def test_is_row_resolved_false_for_approval_needed(self):
+        headers = ["Arrival Date", "MVA", "VIN", "Repair Status"]
+        data_rows = [["05/01/2026", "12345678", "1HGBH41JXMN109186", STATUS_APPROVAL_NEEDED]]
+        updater, _ = _make_sheet_updater_with_mock(headers, data_rows)
+        assert updater.is_row_resolved(2) is False
+
+    def test_has_unique_resolved_vin_true(self):
+        headers = ["Arrival Date", "MVA", "VIN", "Repair Status"]
+        data_rows = [["05/01/2026", "12345678", "1HGBH41JXMN109186", STATUS_COMPLETED]]
+        updater, _ = _make_sheet_updater_with_mock(headers, data_rows)
+        assert updater.has_unique_resolved_vin("1HGBH41JXMN109186") is True
+
+    def test_has_unique_resolved_vin_false_when_duplicate_vin(self):
+        headers = ["Arrival Date", "MVA", "VIN", "Repair Status"]
+        data_rows = [
+            ["05/01/2026", "12345678", "1HGBH41JXMN109186", STATUS_COMPLETED],
+            ["05/02/2026", "87654321", "1HGBH41JXMN109186", STATUS_COMPLETED],
+        ]
+        updater, _ = _make_sheet_updater_with_mock(headers, data_rows)
+        assert updater.has_unique_resolved_vin("1HGBH41JXMN109186") is False
+
 
 # ─── VT-7: Integration — mocked IMAP + mocked worksheet ──────────────────────
 
@@ -411,6 +509,39 @@ class TestVT7_IntegrationMocked:
         )
         assert classify_email(msg) == EmailType.UNKNOWN
 
+    def test_approval_needed_skips_when_row_already_resolved(self, tmp_path):
+        monitor = self._build_monitor(tmp_path)
+
+        headers = [
+            "Arrival Date", "MVA", "FPO#", "VIN", "Make",
+            "Repair Status", "Approval Needed", "Cost", "Repair Status Notes", "Vendor Job Number",
+        ]
+        data_rows = [
+            ["05/06/2026", "12345678", "FPO001", "1HGBH41JXMN109186", "Honda",
+             STATUS_COMPLETED, "No", "", "", ""],
+        ]
+        mock_ws = MagicMock()
+        mock_ws.get_all_values.return_value = [headers] + data_rows
+
+        updater = VendorSheetUpdater.__new__(VendorSheetUpdater)
+        updater._spreadsheet_id = "fake"
+        updater._sheet_name = "GlassClaims"
+        updater._service_account_json = "fake.json"
+        updater._ws = mock_ws
+        updater._headers = headers[:]
+        updater._all_values = [headers] + data_rows
+        monitor._updater = updater
+
+        from vendor_tracking.monitor import RunSummary
+        summary = RunSummary()
+
+        monitor._handle_approval_needed(APPROVAL_HTML, "<approval-002@autoglassnow.com>", "Please Advise", summary)
+
+        # No field writes should occur on resolved rows.
+        assert mock_ws.update_cell.call_count == 0
+        # We should not surface this as active approval-needed once resolved.
+        assert summary.approval_needed == []
+
 
 # ─── VT-8: Idempotency store ─────────────────────────────────────────────────
 
@@ -477,3 +608,219 @@ class TestVT9_ApprovalNeededSummary:
         captured = capsys.readouterr()
 
         assert "APPROVAL NEEDED" not in captured.out
+
+
+# ─── VT-10: Replay / idempotency controls ───────────────────────────────────
+
+class TestVT10_ReplayControls:
+    """VT-10: since-date and idempotency replay controls."""
+
+    def test_since_date_mdy_format_is_converted_to_imap(self):
+        from vendor_tracking.monitor import VendorTrackingMonitor
+
+        monitor = VendorTrackingMonitor(
+            {
+                "vendor_tracking_lookback_days": 30,
+                "vendor_tracking_idempotency_store": "data/test_idem.json",
+            },
+            since_date="05/04/2026",
+            ignore_idempotency=False,
+        )
+        assert monitor._resolve_imap_since_date() == "04-May-2026"
+
+    def test_since_date_iso_format_is_converted_to_imap(self):
+        from vendor_tracking.monitor import VendorTrackingMonitor
+
+        monitor = VendorTrackingMonitor(
+            {
+                "vendor_tracking_lookback_days": 30,
+                "vendor_tracking_idempotency_store": "data/test_idem.json",
+            },
+            since_date="2026-05-04",
+            ignore_idempotency=False,
+        )
+        assert monitor._resolve_imap_since_date() == "04-May-2026"
+
+    def test_invalid_since_date_raises_runtime_error(self):
+        from vendor_tracking.monitor import VendorTrackingMonitor
+
+        monitor = VendorTrackingMonitor(
+            {
+                "vendor_tracking_lookback_days": 30,
+                "vendor_tracking_idempotency_store": "data/test_idem.json",
+            },
+            since_date="not-a-date",
+            ignore_idempotency=False,
+        )
+        with pytest.raises(RuntimeError):
+            monitor._resolve_imap_since_date()
+
+    def test_ignore_idempotency_does_not_skip_processed_message(self):
+        from vendor_tracking.monitor import VendorTrackingMonitor, RunSummary
+
+        msg = _make_message(
+            sender="agn@autoglassnow.com",
+            subject="Please Advise — Prior Approval Required",
+            body=APPROVAL_HTML,
+            message_id="<replay-001@autoglassnow.com>",
+        )
+
+        monitor = VendorTrackingMonitor(
+            {
+                "vendor_tracking_lookback_days": 30,
+                "vendor_tracking_idempotency_store": "data/test_idem.json",
+            },
+            ignore_idempotency=True,
+        )
+        # Pretend the message is already processed.
+        monitor._store._ids.add("<replay-001@autoglassnow.com>")
+
+        # Replace handlers so we can verify processing path executes.
+        called = {"approval": 0}
+
+        def _fake_handle_approval(html, message_id, subject, summary):
+            called["approval"] += 1
+
+        monitor._handle_approval_needed = _fake_handle_approval  # type: ignore[assignment]
+
+        summary = RunSummary()
+        monitor._process_message(msg, summary)
+
+        assert called["approval"] == 1
+        assert summary.skipped_idempotent == 0
+        assert summary.processed == 1
+
+    def test_dry_run_does_not_skip_processed_message(self):
+        from vendor_tracking.monitor import VendorTrackingMonitor, RunSummary
+
+        msg = _make_message(
+            sender="agn@autoglassnow.com",
+            subject="Please Advise — Prior Approval Required",
+            body=APPROVAL_HTML,
+            message_id="<replay-002@autoglassnow.com>",
+        )
+
+        monitor = VendorTrackingMonitor(
+            {
+                "vendor_tracking_lookback_days": 30,
+                "vendor_tracking_idempotency_store": "data/test_idem.json",
+            },
+            dry_run=True,
+        )
+        monitor._store._ids.add("<replay-002@autoglassnow.com>")
+
+        called = {"approval": 0}
+
+        def _fake_handle_approval(html, message_id, subject, summary):
+            called["approval"] += 1
+
+        monitor._handle_approval_needed = _fake_handle_approval  # type: ignore[assignment]
+
+        summary = RunSummary()
+        monitor._process_message(msg, summary)
+
+        assert called["approval"] == 1
+        assert summary.skipped_idempotent == 0
+        assert summary.processed == 1
+
+    def test_dry_run_does_not_mark_idempotency_store(self):
+        from vendor_tracking.monitor import VendorTrackingMonitor, RunSummary
+
+        msg = _make_message(
+            sender="agn@autoglassnow.com",
+            subject="Please Advise — Prior Approval Required",
+            body=APPROVAL_HTML,
+            message_id="<replay-003@autoglassnow.com>",
+        )
+
+        monitor = VendorTrackingMonitor(
+            {
+                "vendor_tracking_lookback_days": 30,
+                "vendor_tracking_idempotency_store": "data/test_idem.json",
+            },
+            dry_run=True,
+        )
+
+        def _fake_handle_approval(html, message_id, subject, summary):
+            return
+
+        monitor._handle_approval_needed = _fake_handle_approval  # type: ignore[assignment]
+
+        summary = RunSummary()
+        monitor._process_message(msg, summary)
+
+        assert monitor._store.is_processed("<replay-003@autoglassnow.com>") is False
+
+    def test_dry_run_would_update_row_without_write(self):
+        from vendor_tracking.monitor import VendorTrackingMonitor, RunSummary
+
+        monitor = VendorTrackingMonitor(
+            {
+                "vendor_tracking_lookback_days": 30,
+                "vendor_tracking_idempotency_store": "data/test_idem.json",
+            },
+            dry_run=True,
+        )
+
+        updater = MagicMock()
+        updater.has_unique_resolved_vin.return_value = False
+        updater.find_row.return_value = type("M", (), {"is_ok": True, "row_index": 3, "status": "ok", "note": ""})()
+        updater.is_row_resolved.return_value = False
+        monitor._updater = updater
+
+        summary = RunSummary()
+        monitor._handle_approval_needed(APPROVAL_HTML, "<replay-004@autoglassnow.com>", "Please Advise", summary)
+
+        updater.update_vendor_fields.assert_not_called()
+        assert summary.approval_needed == ["1HGBH41JXMN109186"]
+
+
+class TestVT11_DecisionLogging:
+    """VT-11: JSONL decision audit trail is written with expected outcomes."""
+
+    def test_writes_skip_idempotent_decision(self, tmp_path):
+        from vendor_tracking.monitor import VendorTrackingMonitor, RunSummary
+
+        decision_log = tmp_path / "decisions.jsonl"
+        monitor = VendorTrackingMonitor(
+            {
+                "vendor_tracking_lookback_days": 30,
+                "vendor_tracking_idempotency_store": "data/test_idem.json",
+            },
+            decision_log_path=str(decision_log),
+        )
+        msg = _make_message(message_id="<dlog-001@test.com>", subject="Any", body="<p>x</p>")
+        monitor._store._ids.add("<dlog-001@test.com>")
+
+        summary = RunSummary()
+        monitor._process_message(msg, summary)
+
+        lines = decision_log.read_text(encoding="utf-8").splitlines()
+        assert len(lines) == 1
+        payload = json.loads(lines[0])
+        assert payload["decision"] == "skip_idempotent"
+
+    def test_writes_resolved_skip_decision(self, tmp_path):
+        from vendor_tracking.monitor import VendorTrackingMonitor, RunSummary
+
+        decision_log = tmp_path / "decisions.jsonl"
+        monitor = VendorTrackingMonitor(
+            {
+                "vendor_tracking_lookback_days": 30,
+                "vendor_tracking_idempotency_store": "data/test_idem.json",
+            },
+            decision_log_path=str(decision_log),
+            ignore_idempotency=True,
+        )
+
+        updater = MagicMock()
+        updater.has_unique_resolved_vin.return_value = True
+        monitor._updater = updater
+
+        summary = RunSummary()
+        monitor._handle_approval_needed(APPROVAL_HTML, "<dlog-002@test.com>", "Please Advise", summary)
+
+        lines = decision_log.read_text(encoding="utf-8").splitlines()
+        payload = json.loads(lines[-1])
+        assert payload["decision"] == "skip_row_resolved"
+        assert payload["email_type"] == "APPROVAL_NEEDED"
