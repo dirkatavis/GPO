@@ -406,6 +406,17 @@ class TestUT4_Sanitization:
         assert manifest == {}
         assert mva_list == []
 
+    def test_lowercase_current_area_alias_is_accepted(self):
+        """Current scanner codes like 51085661lfd parse to the matching door area."""
+        manifest, mva_list = parse_descriptions_to_manifest(
+            [("0505apo", "51085661lfd")], datetime(2026, 5, 5)
+        )
+        assert manifest["51085661"]["Action"] == "Replacement"
+        assert manifest["51085661"]["Area"] == "Front Left Door"
+        assert manifest["51085661"]["Location"] == "APO"
+        assert manifest["51085661"]["Claim#"] == "Missing"
+        assert mva_list == ["51085661"]
+
 
 # ─── UT-5: Local Config Overrides ───────────────────────────────────────────
 
