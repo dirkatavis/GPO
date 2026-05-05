@@ -3,6 +3,20 @@
   
   "sheet_name_comment": "Google Sheet tab name where results are written. Must match exactly. Tip: start a rename in Sheets to see the current name.",
   "sheet_name": "GlassClaims",
+
+  "vendor_tracking_spreadsheet_id_comment": "Spreadsheet ID for the vendor tracking monitor. Override in orchestrator_config.local.json. Use a DEV copy during development; set to production ID only when feature is validated.",
+  "vendor_tracking_spreadsheet_id": "",
+  "vendor_tracking_sheet_name_comment": "Tab name used by the vendor tracking monitor. Must match the GlassClaims tab name in the target spreadsheet.",
+  "vendor_tracking_sheet_name": "GlassClaims",
+
+  "vendor_tracking_senders_comment": "AutoGlassNow sender addresses / domains monitored by the vendor tracking monitor.",
+  "vendor_tracking_senders": ["autoglassnow.com", "omegaedi.com"],
+
+  "vendor_tracking_lookback_days_comment": "How many calendar days back to search for vendor emails on each run.",
+  "vendor_tracking_lookback_days": 30,
+
+  "vendor_tracking_idempotency_store_comment": "Relative path from project root to the processed Message-ID store.",
+  "vendor_tracking_idempotency_store": "data/vendor_tracking_processed.json",
   
   "imap_server_comment": "IMAP server for email retrieval. Use imap.gmail.com for Gmail, or your company's IMAP endpoint.",
   "imap_server": "imap.gmail.com",
