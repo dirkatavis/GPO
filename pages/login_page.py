@@ -2,9 +2,6 @@ import time
 from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
-
-
-from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
 
@@ -37,11 +34,6 @@ class LoginPage:
             self.login_url, label="Login page"
         )
 
-        # Check if already on the workspace page after redirection
-        if "/workspace/module/view/" in self.driver.current_url or "/workspace/fleet-operations-pwa/" in self.driver.current_url:
-            log.info("[LOGIN] Already on workspace page after redirection. Considering logged in.")
-            return {"status": "ok"}
-
         # Handle automatic login redirection
         if "/multipass/automatic-login" in self.driver.current_url:
             log.info("[LOGIN] Automatic login page detected. Assuming login will succeed.")
@@ -64,8 +56,8 @@ class LoginPage:
             pass
 
         if email_field_present:
-            log.info("[LOGIN] Login form detected. Performing login()...")
-            return self.login(username, password, login_id)
+            log.error("[LOGIN] Login form detected, but interactive login path is no longer supported in this flow.")
+            return {"status": "failed", "reason": "interactive_login_not_supported"}
         else:
             log.error("[LOGIN] Neither workspace nor login form detected after navigation. Unexpected state.")
             return {"status": "failed", "reason": "unexpected_page_state"}
