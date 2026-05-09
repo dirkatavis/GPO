@@ -11,7 +11,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from core.navigator import Navigator
 from config.config_loader import get_config
 from utils.logger import log
-from utils.ui_helpers import click_element, safe_wait, send_text
+from utils.ui_helpers import click_element, send_text
 
 
 class LoginPage:
@@ -72,20 +72,6 @@ class LoginPage:
 
     def enter_wwid(self, login_id: str):
         """Actually type and submit the WWID once."""
-        try:
-            safe_wait(
-                self.driver,
-                10,
-                EC.presence_of_element_located(
-                    (By.CSS_SELECTOR, "input[class*='fleet-operations-pwa__text-input__']")
-                ),
-                desc="WWID input"
-            )
-
-        except TimeoutException:
-            log.warning(f"[LOGIN][WARN] Timed out waiting for WWID field")
-            return {"status": "failed", "reason": "wwid_field_timeout"}
-
         try:
             # Use send_text for the actual entry
             if not send_text(
