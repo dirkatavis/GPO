@@ -37,12 +37,18 @@ class LoginPage:
         )
 
     def _is_compass_app_page(self, timeout: int = 3) -> bool:
-        """Return True when already inside Compass app after auth/session restore."""
-        return is_element_present(
+        """Return True only when Compass app UI is positively confirmed."""
+        has_mva_input = is_element_present(
             self.driver,
             (By.CSS_SELECTOR, "input[placeholder*='MVA'], input[id*='mva'], input[name*='mva']"),
             timeout,
         )
+        has_add_work_item_button = is_element_present(
+            self.driver,
+            (By.XPATH, "//button[normalize-space()='Add Work Item']"),
+            timeout,
+        )
+        return has_mva_input and has_add_work_item_button
 
     def _open_compass_mobile_tile(self, timeout: int = 10) -> bool:
         """Open Compass Mobile from the Foundry launcher if present."""
@@ -123,9 +129,10 @@ class LoginPage:
             return {"status": "failed", "reason": "interactive_login_exception"}
 
     def ensure_logged_in(self, username: str, password: str, login_id: str):
-        # Always navigate first
+        # Always navigate first. Login endpoint may immediately redirect to
+        # workspace/launcher/WWID states, so URL verification here is noisy.
         Navigator(self.driver).go_to(
-            self.login_url, label="Login page"
+            self.login_url, label="Login page", verify=False
         )
 
         # Handle automatic login redirection
@@ -181,15 +188,56 @@ class LoginPage:
     def enter_wwid(self, login_id: str):
         """Actually type and submit the WWID once."""
         try:
+            wwid_locator = (
+                By.CSS_SELECTOR,
+                "input[class*='fleet-operations-pwa__text-input__']",
+            )
+
+            # Give WWID page time to fully hydrate before interacting.
+            log.info("[LOGIN][WWID] Starting pre-entry pause (10s)")
+            time.sleep(10)
+            log.info("[LOGIN][WWID] Completed pre-entry pause (10s)")
+
+            # Wait until WWID field is actually interactable.
+            log.info("[LOGIN][WWID] Waiting for WWID field to become clickable (timeout=30s)")
+            wwid_input = WebDriverWait(self.driver, 30).until(
+                EC.element_to_be_clickable(wwid_locator)
+            )
+            log.info("[LOGIN][WWID] WWID field is clickable")
+
             # Use send_text for the actual entry
             if not send_text(
                 self.driver,
-                (By.CSS_SELECTOR, "input[class*='fleet-operations-pwa__text-input__']"),
+                wwid_locator,
                 login_id,
             ):
                 return {"status": "failed", "reason": "wwid_entry_failed"}
 
-            # Press Enter (special key → keep raw)
+            # Prove whether the typed value is present immediately and over time.
+            entered_value = (wwid_input.get_attribute("value") or "").strip()
+            masked_login_id = f"***{login_id[-2:]}" if len(login_id) >= 2 else "***"
+            masked_entered = f"***{entered_value[-2:]}" if len(entered_value) >= 2 else "***"
+            log.info(
+                "[LOGIN][WWID][PROOF] immediate field check: entered=%s expected=%s match=%s",
+                masked_entered,
+                masked_login_id,
+                entered_value == login_id,
+            )
+
+            # Hold after typing so reactive validation can settle, and sample field value.
+            for second in range(1, 6):
+                time.sleep(1)
+                sampled_value = (wwid_input.get_attribute("value") or "").strip()
+                masked_sampled = f"***{sampled_value[-2:]}" if len(sampled_value) >= 2 else "***"
+                log.info(
+                    "[LOGIN][WWID][PROOF] +%ss field check: entered=%s expected=%s match=%s",
+                    second,
+                    masked_sampled,
+                    masked_login_id,
+                    sampled_value == login_id,
+                )
+
+            # Press Enter (special key -> keep raw)
             self.driver.find_element(
                 By.CSS_SELECTOR, "input[class*='fleet-operations-pwa__text-input__']"
             )
