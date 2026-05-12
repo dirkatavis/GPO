@@ -8,7 +8,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from core.navigator import Navigator
 from config.config_loader import get_config
 from utils.logger import log
-from utils.ui_helpers import click_element, send_text
+from utils.ui_helpers import click_element, is_element_present, send_text
 
 
 class LoginPage:
@@ -28,6 +28,100 @@ class LoginPage:
         elems = self.driver.find_elements(By.XPATH, f"//span[contains(text(),'{self.compass_app_label}')]")
         return len(elems) > 0
 
+    def _is_wwid_page(self, timeout: int = 3) -> bool:
+        """Return True when the Compass WWID prompt is visible."""
+        return is_element_present(
+            self.driver,
+            (By.CSS_SELECTOR, "input[class*='fleet-operations-pwa__text-input__']"),
+            timeout,
+        )
+
+    def _is_compass_app_page(self, timeout: int = 3) -> bool:
+        """Return True when already inside Compass app after auth/session restore."""
+        return is_element_present(
+            self.driver,
+            (By.CSS_SELECTOR, "input[placeholder*='MVA'], input[id*='mva'], input[name*='mva']"),
+            timeout,
+        )
+
+    def _open_compass_mobile_tile(self, timeout: int = 10) -> bool:
+        """Open Compass Mobile from the Foundry launcher if present."""
+        selectors = [
+            (By.XPATH, f"//a[@role='button']//span[contains(normalize-space(.), '{self.compass_app_label}')]"),
+            (By.XPATH, f"//a[@role='button'][.//*[contains(normalize-space(.), '{self.compass_app_label}')]]"),
+            (By.XPATH, f"//button[.//*[contains(normalize-space(.), '{self.compass_app_label}')]]"),
+            (By.XPATH, f"//*[contains(normalize-space(.), '{self.compass_app_label}') and (@role='button' or self::a or self::button)]"),
+        ]
+
+        original_handles = set(self.driver.window_handles)
+        for locator in selectors:
+            if click_element(self.driver, locator, timeout=timeout, desc="Compass Mobile tile"):
+                # Compass may open in a new tab; switch if that happens.
+                time.sleep(1)
+                new_handles = [h for h in self.driver.window_handles if h not in original_handles]
+                if new_handles:
+                    self.driver.switch_to.window(new_handles[-1])
+                    log.info("[LOGIN] Switched to Compass Mobile tab")
+                return True
+
+        return False
+
+    def _is_compass_launcher_page(self, timeout: int = 2) -> bool:
+        """Return True when the Foundry launcher tile for Compass is visible."""
+        return is_element_present(
+            self.driver,
+            (By.XPATH, f"//*[contains(normalize-space(.), '{self.compass_app_label}')]"),
+            timeout,
+        )
+
+    def _is_login_form_page(self, timeout: int = 2) -> bool:
+        """Return True when Microsoft email login form is visible."""
+        return is_element_present(self.driver, (By.NAME, "loginfmt"), timeout)
+
+    def _wait_for_post_auth_landing(self, timeout: int = 30) -> str:
+        """Wait for redirect away from multipass into a known landing state."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if self._is_wwid_page(timeout=1):
+                return "wwid"
+            if self._is_compass_app_page(timeout=1):
+                return "app"
+            if self._is_compass_launcher_page(timeout=1):
+                return "launcher"
+            if self._is_login_form_page(timeout=1):
+                return "login_form"
+
+            url = self.driver.current_url
+            if "/workspace/module/view/" in url or "/workspace/fleet-operations-pwa/" in url:
+                return "workspace"
+
+            time.sleep(0.5)
+
+        return "unknown"
+
+    def _complete_interactive_login(self, username: str, password: str) -> dict:
+        """Perform Microsoft interactive login if session drops to login form."""
+        try:
+            if not send_text(self.driver, (By.NAME, "loginfmt"), username, timeout=10):
+                return {"status": "failed", "reason": "email_entry_failed"}
+            if not click_element(self.driver, (By.ID, "idSIButton9"), timeout=10, desc="Next button"):
+                return {"status": "failed", "reason": "email_submit_failed"}
+
+            if not send_text(self.driver, (By.NAME, "passwd"), password, timeout=10):
+                return {"status": "failed", "reason": "password_entry_failed"}
+            if not click_element(self.driver, (By.ID, "idSIButton9"), timeout=10, desc="Sign in button"):
+                return {"status": "failed", "reason": "password_submit_failed"}
+
+            # Optional: dismiss 'Stay signed in?' if shown.
+            click_element(self.driver, (By.ID, "idBtn_Back"), timeout=3, desc="Stay signed in No")
+
+            # Optional: if account picker appears, click first available tile.
+            click_element(self.driver, (By.XPATH, "(//div[contains(@data-testid, 'account-tile')])[1]"), timeout=5, desc="First SSO account tile")
+            return {"status": "ok"}
+        except Exception as e:
+            log.error(f"[LOGIN] Interactive login fallback failed: {e}")
+            return {"status": "failed", "reason": "interactive_login_exception"}
+
     def ensure_logged_in(self, username: str, password: str, login_id: str):
         # Always navigate first
         Navigator(self.driver).go_to(
@@ -36,12 +130,34 @@ class LoginPage:
 
         # Handle automatic login redirection
         if "/multipass/automatic-login" in self.driver.current_url:
-            log.info("[LOGIN] Automatic login page detected. Assuming login will succeed.")
-            return {"status": "ok"}
+            log.info("[LOGIN] Automatic login page detected. Waiting for post-auth landing state.")
+            state = self._wait_for_post_auth_landing(timeout=30)
+            if state == "login_form":
+                log.info("[LOGIN] Session fell back to interactive Microsoft login.")
+                res = self._complete_interactive_login(username, password)
+                if res["status"] != "ok":
+                    return res
+                state = self._wait_for_post_auth_landing(timeout=30)
+
+            if state in {"workspace", "wwid", "app", "launcher"}:
+                log.info(f"[LOGIN] Automatic-login settled on state: {state}")
+                return {"status": "ok"}
+
+            log.error("[LOGIN] Automatic-login did not settle into a known state.")
+            return {"status": "failed", "reason": "automatic_login_unsettled"}
 
         # Check if already on the workspace page after redirection
         if "/workspace/module/view/" in self.driver.current_url or "/workspace/fleet-operations-pwa/" in self.driver.current_url:
             log.info("[LOGIN] Already on workspace page after redirection. Considering logged in.")
+            return {"status": "ok"}
+
+        if self._is_compass_launcher_page(timeout=3):
+            log.info("[LOGIN] Foundry launcher detected; treating as authenticated.")
+            return {"status": "ok"}
+
+        # Newer flow often lands directly on WWID without showing email/password form.
+        if self._is_wwid_page(timeout=5) or self._is_compass_app_page(timeout=3):
+            log.info("[LOGIN] Session already authenticated (WWID/app page detected).")
             return {"status": "ok"}
 
         # If not on workspace, check if login form is present and perform login
@@ -56,8 +172,8 @@ class LoginPage:
             pass
 
         if email_field_present:
-            log.error("[LOGIN] Login form detected, but interactive login path is no longer supported in this flow.")
-            return {"status": "failed", "reason": "interactive_login_not_supported"}
+            log.info("[LOGIN] Login form detected; running interactive fallback.")
+            return self._complete_interactive_login(username, password)
         else:
             log.error("[LOGIN] Neither workspace nor login form detected after navigation. Unexpected state.")
             return {"status": "failed", "reason": "unexpected_page_state"}
@@ -89,8 +205,24 @@ class LoginPage:
 
     def ensure_user_context(self, login_id: str):
         """Ensure WWID is entered once Compass Mobile is loaded."""
-        log.info(f"[LOGIN] Proceeding to WWID entry")
-        return self.enter_wwid(login_id)
+        if self._is_compass_app_page(timeout=2):
+            log.info("[LOGIN] Already inside Compass app; user context is ready.")
+            return {"status": "ok"}
+
+        if self._is_wwid_page(timeout=3):
+            log.info("[LOGIN] Proceeding to WWID entry")
+            return self.enter_wwid(login_id)
+
+        if self._open_compass_mobile_tile(timeout=8):
+            if self._is_wwid_page(timeout=8):
+                log.info("[LOGIN] Compass tile opened; proceeding to WWID entry")
+                return self.enter_wwid(login_id)
+            if self._is_compass_app_page(timeout=5):
+                log.info("[LOGIN] Compass tile opened directly into app page.")
+                return {"status": "ok"}
+
+        log.error("[LOGIN] Could not establish Compass user context (WWID/app not detected).")
+        return {"status": "failed", "reason": "user_context_not_detected"}
 
     def ensure_ready(self, username: str, password: str, login_id: str):
         """
