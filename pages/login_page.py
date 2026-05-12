@@ -84,17 +84,32 @@ class LoginPage:
         """Return True when Microsoft email login form is visible."""
         return is_element_present(self.driver, (By.NAME, "loginfmt"), timeout)
 
+    def _is_element_present_now(self, by: str, selector: str) -> bool:
+        """Fast, non-blocking element presence check for tight polling loops."""
+        try:
+            return len(self.driver.find_elements(by, selector)) > 0
+        except Exception:
+            return False
+
     def _wait_for_post_auth_landing(self, timeout: int = 30) -> str:
         """Wait for redirect away from multipass into a known landing state."""
         deadline = time.time() + timeout
         while time.time() < deadline:
-            if self._is_wwid_page(timeout=1):
+            if self._is_element_present_now(By.CSS_SELECTOR, "input[class*='fleet-operations-pwa__text-input__']"):
                 return "wwid"
-            if self._is_compass_app_page(timeout=1):
+            has_mva_input = self._is_element_present_now(
+                By.CSS_SELECTOR,
+                "input[placeholder*='MVA'], input[id*='mva'], input[name*='mva']",
+            )
+            has_add_work_item_button = self._is_element_present_now(
+                By.XPATH,
+                "//button[normalize-space()='Add Work Item']",
+            )
+            if has_mva_input and has_add_work_item_button:
                 return "app"
-            if self._is_compass_launcher_page(timeout=1):
+            if self._is_element_present_now(By.XPATH, f"//*[contains(normalize-space(.), '{self.compass_app_label}')]"):
                 return "launcher"
-            if self._is_login_form_page(timeout=1):
+            if self._is_element_present_now(By.NAME, "loginfmt"):
                 return "login_form"
 
             url = self.driver.current_url
@@ -128,7 +143,7 @@ class LoginPage:
             log.error(f"[LOGIN] Interactive login fallback failed: {e}")
             return {"status": "failed", "reason": "interactive_login_exception"}
 
-    def ensure_logged_in(self, username: str, password: str, login_id: str):
+    def ensure_logged_in(self, username: str, password: str, _login_id: str):
         # Always navigate first. Login endpoint may immediately redirect to
         # workspace/launcher/WWID states, so URL verification here is noisy.
         Navigator(self.driver).go_to(
@@ -237,10 +252,7 @@ class LoginPage:
                     sampled_value == login_id,
                 )
 
-            # Press Enter (special key -> keep raw)
-            self.driver.find_element(
-                By.CSS_SELECTOR, "input[class*='fleet-operations-pwa__text-input__']"
-            )
+            # Submit via button because Enter key behavior is inconsistent here.
             if not click_element(self.driver, (By.XPATH, "//button[.//span[normalize-space()='Submit']]")):
                 log.warning(f"[LOGIN][WARN] Could not click WWID submit button")
                 return {"status": "failed", "reason": "wwid_submit_failed"}
