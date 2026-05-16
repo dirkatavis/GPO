@@ -15,6 +15,7 @@ class LoginPage:
     def __init__(self, driver):
         self.driver = driver
         self.delay_seconds = get_config("delay_seconds", 4)
+        self.wwid_entry_timeout_seconds = int(get_config("wwid_entry_timeout_seconds", 25))
         self.login_url = get_config(
             "login_url",
             "https://avisbudget.palantirfoundry.com/multipass/login",
@@ -70,6 +71,7 @@ class LoginPage:
                 self.driver,
                 (By.CSS_SELECTOR, "input[class*='fleet-operations-pwa__text-input__']"),
                 login_id,
+                timeout=self.wwid_entry_timeout_seconds,
             ):
                 return {"status": "failed", "reason": "wwid_entry_failed"}
 
