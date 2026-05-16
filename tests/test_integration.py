@@ -182,7 +182,8 @@ class TestIT4_SpreadsheetPersistence:
         rows = []
         for mva in mvas:
             rows.append({
-                "Arrival Date": date,
+                "Inventory Date": date,
+                "Original Date": date,
                 "MVA": mva,
                 "FPO#": "",
                 "VIN": "1HGCM82633A004352",
@@ -198,7 +199,7 @@ class TestIT4_SpreadsheetPersistence:
     def _mock_worksheet(self, existing_rows=None):
         """Create a mock worksheet with optional existing data."""
         ws = MagicMock()
-        header = ["Arrival Date", "MVA", "FPO#", "VIN", "Make", "Location",
+        header = ["Inventory Date", "Original Date", "MVA", "FPO#", "VIN", "Make", "Location",
                   "Action", "Area", "Claim#", "WorkItem"]
         if existing_rows is None:
             existing_rows = []
@@ -219,13 +220,13 @@ class TestIT4_SpreadsheetPersistence:
         written = ws.insert_rows.call_args[0][0]
         assert ws.insert_rows.call_args.kwargs["inherit_from_before"] is True
         assert len(written) == 2
-        assert written[0][1] == "59340120"
-        assert written[1][1] == "59340121"
+        assert written[0][2] == "59340120"
+        assert written[1][2] == "59340121"
 
     @patch("GlassOrchestrator._get_worksheet")
     def test_appends_without_overwriting(self, mock_get_ws):
         """Second write appends new rows; existing data untouched."""
-        existing = [["03/05/2026", "59340120", "", "1HGCM82633A004352",
+        existing = [["03/05/2026", "03/05/2026", "59340120", "", "1HGCM82633A004352",
                       "Windshield", "APO", "Replace(AGN)", "Windshield", "Missing", "verified"]]
         ws = self._mock_worksheet(existing)
         mock_get_ws.return_value = ws
@@ -237,12 +238,12 @@ class TestIT4_SpreadsheetPersistence:
         ws.insert_rows.assert_called_once()
         written = ws.insert_rows.call_args[0][0]
         assert ws.insert_rows.call_args.kwargs["inherit_from_before"] is True
-        assert written[0][1] == "59340121"
+        assert written[0][2] == "59340121"
 
     @patch("GlassOrchestrator._get_worksheet")
     def test_idempotency_prevents_duplicate(self, mock_get_ws):
         """Same MVA+Date already in sheet → no rows inserted."""
-        existing = [["03/05/2026", "59340120", "", "1HGCM82633A004352",
+        existing = [["03/05/2026", "03/05/2026", "59340120", "", "1HGCM82633A004352",
                       "Windshield", "APO", "Replace(AGN)", "Windshield", "Missing", "verified"]]
         ws = self._mock_worksheet(existing)
         mock_get_ws.return_value = ws
@@ -256,7 +257,7 @@ class TestIT4_SpreadsheetPersistence:
     @patch("GlassOrchestrator._get_worksheet")
     def test_idempotency_normalizes_date_format(self, mock_get_ws):
         """Sheet date '5/2/2026' should match incoming '05/02/2026'."""
-        existing = [["5/2/2026", "59193750", "", "KNDPU3DG9T7301521",
+        existing = [["5/2/2026", "5/2/2026", "59193750", "", "KNDPU3DG9T7301521",
                      "KIA SPORTAGE 2WD", "APO", "Replace(AGN)", "Windshield", "Listed", "verified"]]
         ws = self._mock_worksheet(existing)
         mock_get_ws.return_value = ws
@@ -269,7 +270,7 @@ class TestIT4_SpreadsheetPersistence:
 
     @patch("GlassOrchestrator._get_worksheet")
     def test_correct_columns_written(self, mock_get_ws):
-        """Verify all 9 columns match the expected schema."""
+        """Verify all columns match the expected schema."""
         ws = self._mock_worksheet()
         mock_get_ws.return_value = ws
 
@@ -278,8 +279,37 @@ class TestIT4_SpreadsheetPersistence:
 
         written = ws.insert_rows.call_args[0][0]
         assert ws.insert_rows.call_args.kwargs["inherit_from_before"] is True
-        assert written[0] == ["03/05/2026", "59340120", "", "1HGCM82633A004352",
+        assert written[0] == ["03/05/2026", "03/05/2026", "59340120", "", "1HGCM82633A004352",
                                 "Windshield", "APO", "Replace(AGN)", "Windshield", "Missing", "verified"]
+
+    @patch("GlassOrchestrator._get_worksheet")
+    def test_same_lifecycle_updates_inventory_date_and_preserves_original_date(self, mock_get_ws):
+        """Same-MVA sighting inside window should update Inventory Date, not insert new row."""
+        existing = [["03/05/2026", "03/05/2026", "59340120", "", "1HGCM82633A004352",
+                     "Windshield", "APO", "Replace(AGN)", "Windshield", "Missing", "verified"]]
+        ws = self._mock_worksheet(existing)
+        mock_get_ws.return_value = ws
+
+        df = self._make_test_df(["59340120"], date="03/07/2026")
+        new_rows = persist_new_rows(df)
+
+        assert len(new_rows) == 0
+        ws.insert_rows.assert_not_called()
+        ws.update_cell.assert_called_once_with(2, 1, "03/07/2026")
+
+    @patch("GlassOrchestrator._get_worksheet")
+    def test_new_lifecycle_inserts_new_row_after_window(self, mock_get_ws):
+        """Same MVA outside lifecycle window should start a new incident row."""
+        existing = [["03/01/2026", "03/01/2026", "59340120", "", "1HGCM82633A004352",
+                     "Windshield", "APO", "Replace(AGN)", "Windshield", "Missing", "verified"]]
+        ws = self._mock_worksheet(existing)
+        mock_get_ws.return_value = ws
+
+        df = self._make_test_df(["59340120"], date="03/06/2026")
+        new_rows = persist_new_rows(df)
+
+        assert len(new_rows) == 1
+        ws.insert_rows.assert_called_once()
 
 
 # ─── IT-5: Spreadsheet Configuration Health ──────────────────────────────────
@@ -679,7 +709,8 @@ def live_sheet_it8(tmp_path_factory):
     rows = []
     for scan, expected_action, expected_area, expected_claim in _ALL_SCAN_CASES:
         rows.append({
-            "Arrival Date": _IT8_SENTINEL_DATE,
+            "Inventory Date": _IT8_SENTINEL_DATE,
+            "Original Date": _IT8_SENTINEL_DATE,
             "MVA":          scan[:8],
             "FPO#":         "",
             "VIN":          "N/A",
@@ -717,7 +748,7 @@ class TestIT8_LiveSheetAllCombinations:
     real GlassClaims Google Sheet and reads back to validate correctness.
 
     Requires GLASS_RUN_LIVE_SHEETS_TESTS=1 and a valid Service_account.json.
-    All rows use Arrival Date='01/01/2099' so they can never collide with real
+    All rows use Inventory Date='01/01/2099' so they can never collide with real
     claims.  The fixture tears down (deletes sentinel rows) after every run.
     """
 

@@ -22,7 +22,8 @@ def _merged_df(mvas: list[str], date: str = "04/25/2026") -> pd.DataFrame:
     """Build a minimal merged DataFrame matching the current COLUMNS contract."""
     rows = [
         {
-            "Arrival Date": date,
+            "Inventory Date": date,
+            "Original Date": date,
             "MVA": mva,
             "FPO#": "",
             "VIN": "1HGCM82633A004352",
@@ -43,7 +44,7 @@ def _worksheet_with_existing(mvas: list[str], date: str = "04/25/2026") -> Magic
     ws = MagicMock()
     header = list(COLUMNS)
     data_rows = [
-        [date, mva, "", "1HGCM82633A004352", "HONDA CIVIC", "APO",
+        [date, date, mva, "", "1HGCM82633A004352", "HONDA CIVIC", "APO",
          "Replace(AGN)", "Windshield", "Missing", "verified"]
         for mva in mvas
     ]

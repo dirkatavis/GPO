@@ -552,7 +552,8 @@ class TestUT6_NotificationPayload:
         df = pd.DataFrame(
             [
                 {
-                    "Arrival Date": "03/09/2026",
+                    "Inventory Date": "03/09/2026",
+                    "Original Date": "03/09/2026",
                     "MVA": "59654641",
                     "VIN": "1HGCY1F44SA083453",
                     "Make": "HONDA ACCORD",
@@ -563,7 +564,8 @@ class TestUT6_NotificationPayload:
                     "WorkItem": "verified",
                 },
                 {
-                    "Arrival Date": "03/09/2026",
+                    "Inventory Date": "03/09/2026",
+                    "Original Date": "03/09/2026",
                     "MVA": "60853262",
                     "VIN": "JN8BT3DDXTW297427",
                     "Make": "NISSAN ROGUE AWD",
@@ -645,30 +647,31 @@ class TestUT7_LocationExtraction:
         )
         assert manifest["59340120"]["Location"] == "BB"
 
-    def test_manifest_uses_type_mmdd_for_arrival_date(self):
-        """Type '0502APO' should drive Arrival Date to 05/02/current year."""
+    def test_manifest_uses_type_mmdd_for_inventory_date(self):
+        """Type '0502APO' should drive Inventory Date to 05/02/current year."""
         manifest, _ = parse_descriptions_to_manifest(
             [("0502APO", "59340120WS")], datetime(2026, 5, 1)
         )
-        assert manifest["59340120"]["Arrival Date"] == "05/02/2026"
+        assert manifest["59340120"]["Inventory Date"] == "05/02/2026"
+        assert manifest["59340120"]["Original Date"] == "05/02/2026"
 
     def test_manifest_type_invalid_date_falls_back_to_email_date(self):
         """Invalid Type MMDD (e.g. 0230) should fall back to email Date header day."""
         manifest, _ = parse_descriptions_to_manifest(
             [("0230APO", "59340120WS")], datetime(2026, 5, 1)
         )
-        assert manifest["59340120"]["Arrival Date"] == "05/01/2026"
+        assert manifest["59340120"]["Inventory Date"] == "05/01/2026"
 
     def test_manifest_type_slash_date_is_rejected_and_falls_back(self):
         """Slash format is invalid; parser should fall back to email Date header day."""
         manifest, _ = parse_descriptions_to_manifest(
             [("05/02APO", "59340120WS")], datetime(2026, 5, 1)
         )
-        assert manifest["59340120"]["Arrival Date"] == "05/01/2026"
+        assert manifest["59340120"]["Inventory Date"] == "05/01/2026"
 
     def test_manifest_type_letter_o_in_date_is_rejected_and_falls_back(self):
         """Strict MMDD requires digits; letter O typo should fall back to email date."""
         manifest, _ = parse_descriptions_to_manifest(
             [("05O2APO", "59340120WS")], datetime(2026, 5, 1)
         )
-        assert manifest["59340120"]["Arrival Date"] == "05/01/2026"
+        assert manifest["59340120"]["Inventory Date"] == "05/01/2026"

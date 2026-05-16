@@ -318,7 +318,7 @@ class TestVT5_SheetRowMatching:
     """VT-5: VendorSheetUpdater.find_row — match, not-found, ambiguous"""
 
     def setup_method(self):
-        headers = ["Arrival Date", "MVA", "FPO#", "VIN", "Make"]
+        headers = ["Inventory Date", "MVA", "FPO#", "VIN", "Make"]
         data_rows = [
             ["05/01/2026", "12345678", "FPO001", "1HGBH41JXMN109186", "Honda"],
             ["05/02/2026", "87654321", "FPO002", "2HGBH41JXMN109187", "Toyota"],
@@ -346,7 +346,7 @@ class TestVT5_SheetRowMatching:
 
     def test_date_normalization_iso_format(self):
         """Sheet date in ISO format should match incoming M/D/YYYY format."""
-        headers = ["Arrival Date", "VIN"]
+        headers = ["Inventory Date", "VIN"]
         data_rows = [["2026-05-02", "2HGBH41JXMN109187"]]
         updater, _ = _make_sheet_updater_with_mock(headers, data_rows)
         result = updater.find_row("2HGBH41JXMN109187", "05/02/2026")
@@ -360,7 +360,7 @@ class TestVT6_UpdateVendorFields:
 
     def setup_method(self):
         headers = [
-            "Arrival Date", "MVA", "VIN",
+            "Inventory Date", "MVA", "VIN",
             "Repair Status", "Approval Needed", "Cost", "Repair Status Notes",
         ]
         data_rows = [
@@ -377,7 +377,7 @@ class TestVT6_UpdateVendorFields:
     def test_status_precedence_blocks_downgrade(self):
         """Completed status must not be overwritten by a lower-precedence status."""
         headers = [
-            "Arrival Date", "MVA", "VIN",
+            "Inventory Date", "MVA", "VIN",
             "Repair Status", "Approval Needed",
         ]
         data_rows = [
@@ -409,25 +409,25 @@ class TestVT6_UpdateVendorFields:
             assert c.args[2] != "value" or c.args[1] != 99
 
     def test_is_row_resolved_true_for_completed(self):
-        headers = ["Arrival Date", "MVA", "VIN", "Repair Status"]
+        headers = ["Inventory Date", "MVA", "VIN", "Repair Status"]
         data_rows = [["05/01/2026", "12345678", "1HGBH41JXMN109186", STATUS_COMPLETED]]
         updater, _ = _make_sheet_updater_with_mock(headers, data_rows)
         assert updater.is_row_resolved(2) is True
 
     def test_is_row_resolved_false_for_approval_needed(self):
-        headers = ["Arrival Date", "MVA", "VIN", "Repair Status"]
+        headers = ["Inventory Date", "MVA", "VIN", "Repair Status"]
         data_rows = [["05/01/2026", "12345678", "1HGBH41JXMN109186", STATUS_APPROVAL_NEEDED]]
         updater, _ = _make_sheet_updater_with_mock(headers, data_rows)
         assert updater.is_row_resolved(2) is False
 
     def test_has_unique_resolved_vin_true(self):
-        headers = ["Arrival Date", "MVA", "VIN", "Repair Status"]
+        headers = ["Inventory Date", "MVA", "VIN", "Repair Status"]
         data_rows = [["05/01/2026", "12345678", "1HGBH41JXMN109186", STATUS_COMPLETED]]
         updater, _ = _make_sheet_updater_with_mock(headers, data_rows)
         assert updater.has_unique_resolved_vin("1HGBH41JXMN109186") is True
 
     def test_has_unique_resolved_vin_false_when_duplicate_vin(self):
-        headers = ["Arrival Date", "MVA", "VIN", "Repair Status"]
+        headers = ["Inventory Date", "MVA", "VIN", "Repair Status"]
         data_rows = [
             ["05/01/2026", "12345678", "1HGBH41JXMN109186", STATUS_COMPLETED],
             ["05/02/2026", "87654321", "1HGBH41JXMN109186", STATUS_COMPLETED],
@@ -471,7 +471,7 @@ class TestVT7_IntegrationMocked:
         )
 
         headers = [
-            "Arrival Date", "MVA", "FPO#", "VIN", "Make",
+            "Inventory Date", "MVA", "FPO#", "VIN", "Make",
             "Repair Status", "Approval Needed", "Cost", "Repair Status Notes", "Vendor Job Number",
         ]
         data_rows = [
@@ -513,7 +513,7 @@ class TestVT7_IntegrationMocked:
         monitor = self._build_monitor(tmp_path)
 
         headers = [
-            "Arrival Date", "MVA", "FPO#", "VIN", "Make",
+            "Inventory Date", "MVA", "FPO#", "VIN", "Make",
             "Repair Status", "Approval Needed", "Cost", "Repair Status Notes", "Vendor Job Number",
         ]
         data_rows = [
