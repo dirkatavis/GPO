@@ -948,12 +948,13 @@ def persist_new_rows(df: pd.DataFrame) -> pd.DataFrame:
     log.info("Persistence: Appending to Google Sheet [%s] …", SHEET_NAME)
 
     ws = _get_worksheet()
+    all_vals = ws.get_all_values()
 
     # Update same-lifecycle sightings in place (Inventory Date), then insert only truly new rows.
-    df = _apply_same_lifecycle_inventory_updates(ws, df)
+    df = _apply_same_lifecycle_inventory_updates(ws, all_vals, df)
 
     # Determine which rows are truly new
-    existing_keys = _load_existing_keys(ws)
+    existing_keys = _load_existing_keys(all_vals)
     new_rows = _filter_new_rows(df, existing_keys)
 
     if new_rows.empty:
@@ -961,7 +962,7 @@ def persist_new_rows(df: pd.DataFrame) -> pd.DataFrame:
         return new_rows
 
     # Find the insertion point: first empty row after last data row (column B = MVA)
-    insert_row = _find_insert_row(ws)
+    insert_row = _find_insert_row(all_vals)
 
     # Build rows as lists matching the 8-column contract
     rows_to_insert = _rows_from_dataframe(new_rows)
@@ -1023,13 +1024,12 @@ def _parse_key_date(raw_date: object) -> date | None:
         return None
 
 
-def _apply_same_lifecycle_inventory_updates(ws, df: pd.DataFrame) -> pd.DataFrame:
+def _apply_same_lifecycle_inventory_updates(ws, all_vals: list[list[str]], df: pd.DataFrame) -> pd.DataFrame:
     """Update Inventory Date in existing sheet rows for same-lifecycle sightings.
 
     A sighting is same-lifecycle when the same MVA already exists and the incoming
     Inventory Date is within INCIDENT_WINDOW_DAYS of the latest existing Inventory Date.
     """
-    all_vals = ws.get_all_values()
     if not all_vals:
         return df
 
@@ -1051,7 +1051,7 @@ def _apply_same_lifecycle_inventory_updates(ws, df: pd.DataFrame) -> pd.DataFram
             continue
 
         best_match_row: int | None = None
-        best_match_date: datetime.date | None = None
+        best_match_date: date | None = None
 
         for sheet_row_idx, sheet_row in enumerate(all_vals[1:], start=2):
             if len(sheet_row) <= max(mva_idx, inventory_idx):
@@ -1094,9 +1094,8 @@ def _sheet_date_index(headers: list[str]) -> int | None:
     return None
 
 
-def _find_insert_row(ws) -> int:
+def _find_insert_row(all_vals: list[list[str]]) -> int:
     """Return the first row after existing data where new rows should be inserted."""
-    all_vals = ws.get_all_values()
     if not all_vals:
         return 2
 
@@ -1129,14 +1128,13 @@ def _rows_from_dataframe(df: pd.DataFrame) -> list[list[str]]:
     return rows
 
 
-def _load_existing_keys(ws) -> set[str]:
+def _load_existing_keys(all_vals: list[list[str]]) -> set[str]:
     """
     Read existing MVA|Date composite keys from the Google Sheet worksheet
     for idempotency checking.
     """
     existing_keys: set[str] = set()
     try:
-        all_vals = ws.get_all_values()
         if not all_vals:
             return existing_keys
         headers = all_vals[0]
@@ -1156,9 +1154,9 @@ def _load_existing_keys(ws) -> set[str]:
     return existing_keys
 
 
-def is_duplicate(mva: str, date: str, existing_keys: set[str]) -> bool:
+def is_duplicate(mva: str, inventory_date: str, existing_keys: set[str]) -> bool:
     """Return True if the MVA+Date composite key already exists."""
-    return _build_duplicate_key(mva, date) in existing_keys
+    return _build_duplicate_key(mva, inventory_date) in existing_keys
 
 
 # ─── Notification ─────────────────────────────────────────────────────────────
