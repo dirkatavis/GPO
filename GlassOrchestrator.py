@@ -20,7 +20,7 @@ import smtplib
 import subprocess
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import getaddresses
@@ -94,9 +94,11 @@ def _load_runtime_config(config_path: Path) -> dict:
         "cycle_tracker_store": "data/mva_cycle_tracker.json",
         "cycle_gap_grace_days": 1,
         "cycle_completed_retention": 1000,
+        "incident_window_days": 3,
         "location": "APO",
         "columns": [
-            "Arrival Date",
+            "Inventory Date",
+            "Original Date",
             "MVA",
             "FPO#",
             "VIN",
@@ -242,6 +244,7 @@ COLUMNS = list(RUNTIME_CONFIG["columns"])
 CYCLE_TRACKER_STORE = _resolve_config_path(str(RUNTIME_CONFIG.get("cycle_tracker_store", "data/mva_cycle_tracker.json")))
 CYCLE_GAP_GRACE_DAYS = int(RUNTIME_CONFIG.get("cycle_gap_grace_days", 1))
 CYCLE_COMPLETED_RETENTION = int(RUNTIME_CONFIG.get("cycle_completed_retention", 1000))
+INCIDENT_WINDOW_DAYS = int(RUNTIME_CONFIG.get("incident_window_days", 3))
 
 
 # The phase terminalogy should be seen as a design process but not an archetetual method
@@ -661,7 +664,7 @@ def _extract_location_from_type(type_value: str | None) -> str:
 
 
 def _extract_arrival_date_from_type(type_value: str | None, fallback_date: datetime) -> str:
-    """Extract Arrival Date from Type MMDD prefix, else use fallback date.
+    """Extract Inventory Date from Type MMDD prefix, else use fallback date.
 
     Examples:
       - '0502APO' -> '05/02/<fallback year>'
@@ -714,7 +717,7 @@ def parse_descriptions_to_manifest(descriptions: list[tuple[str, str]], email_da
         email_date: Email Date header as datetime
 
     Returns:
-        manifest: dict keyed by MVA → {Arrival Date, MVA, FPO#, VIN, Make,
+        manifest: dict keyed by MVA → {Inventory Date, Original Date, MVA, FPO#, VIN, Make,
                   Location, Action, Area, Claim#, WorkItem}
         mva_list: list of clean 8-digit MVA strings for the worker (errors excluded)
     """
@@ -728,7 +731,7 @@ def parse_descriptions_to_manifest(descriptions: list[tuple[str, str]], email_da
     for type_value, desc in descriptions:
         raw = desc.strip()
         location = _extract_location_from_type(type_value)
-        arrival_date = _extract_arrival_date_from_type(type_value, email_date)
+        inventory_date = _extract_arrival_date_from_type(type_value, email_date)
         if not type_value:
             missing_type_count += 1
 
@@ -758,7 +761,8 @@ def parse_descriptions_to_manifest(descriptions: list[tuple[str, str]], email_da
         claim = "Listed" if claim_flag else "Missing"
 
         manifest[mva] = {
-            "Arrival Date": arrival_date,
+            "Inventory Date": inventory_date,
+            "Original Date": inventory_date,
             "MVA": mva,
             "FPO#": "",      # Manually maintained — pipeline writes blank
             "VIN": "",       # Populated during merge step
@@ -936,7 +940,7 @@ def persist_new_rows(df: pd.DataFrame) -> pd.DataFrame:
     Append merged data to Google Sheet 'ATL_Data 2026 : GlassClaims'.
 
     Inserts new rows above the summary section so formulas stay intact.
-    Idempotency: Composite key (MVA + Arrival Date) is checked against
+    Idempotency: Composite key (MVA + Inventory Date) is checked against
     existing rows. Duplicate rows are silently skipped.
 
     Returns the DataFrame of actually-new rows written.
@@ -944,9 +948,13 @@ def persist_new_rows(df: pd.DataFrame) -> pd.DataFrame:
     log.info("Persistence: Appending to Google Sheet [%s] …", SHEET_NAME)
 
     ws = _get_worksheet()
+    all_vals = ws.get_all_values()
+
+    # Update same-lifecycle sightings in place (Inventory Date), then insert only truly new rows.
+    df = _apply_same_lifecycle_inventory_updates(ws, all_vals, df)
 
     # Determine which rows are truly new
-    existing_keys = _load_existing_keys(ws)
+    existing_keys = _load_existing_keys(all_vals)
     new_rows = _filter_new_rows(df, existing_keys)
 
     if new_rows.empty:
@@ -954,7 +962,7 @@ def persist_new_rows(df: pd.DataFrame) -> pd.DataFrame:
         return new_rows
 
     # Find the insertion point: first empty row after last data row (column B = MVA)
-    insert_row = _find_insert_row(ws)
+    insert_row = _find_insert_row(all_vals)
 
     # Build rows as lists matching the 8-column contract
     rows_to_insert = _rows_from_dataframe(new_rows)
@@ -969,7 +977,7 @@ def persist_new_rows(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _normalize_arrival_date_key(value: object) -> str:
-    """Normalize arrival dates to a canonical key-safe format.
+    """Normalize inventory dates to a canonical key-safe format.
 
     Converts common month/day/year strings (with or without zero padding) to
     ISO date format so idempotency comparisons are stable across Google Sheets
@@ -994,25 +1002,108 @@ def _normalize_arrival_date_key(value: object) -> str:
     return raw
 
 
-def _build_duplicate_key(mva: object, arrival_date: object) -> str:
-    """Build a normalized MVA|Arrival Date idempotency key."""
-    return f"{str(mva).strip()}|{_normalize_arrival_date_key(arrival_date)}"
+def _build_duplicate_key(mva: object, inventory_date: object) -> str:
+    """Build a normalized MVA|Inventory Date idempotency key."""
+    return f"{str(mva).strip()}|{_normalize_arrival_date_key(inventory_date)}"
 
 
 def _filter_new_rows(df: pd.DataFrame, existing_keys: set[str]) -> pd.DataFrame:
-    """Return only rows not already present in the sheet (MVA|Arrival Date key)."""
+    """Return only rows not already present in the sheet (MVA|Inventory Date key)."""
     mva_series = df["MVA"].astype(str).str.strip()
-    date_series = df["Arrival Date"].astype(str).map(_normalize_arrival_date_key)
+    date_series = df["Inventory Date"].astype(str).map(_normalize_arrival_date_key)
     keys = mva_series + "|" + date_series
     return df[~keys.isin(existing_keys)].copy()
 
 
-def _find_insert_row(ws) -> int:
+def _parse_key_date(raw_date: object) -> date | None:
+    """Parse a key-normalized date string into a date for lifecycle comparisons."""
+    normalized = _normalize_arrival_date_key(raw_date)
+    try:
+        return datetime.strptime(normalized, "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def _apply_same_lifecycle_inventory_updates(ws, all_vals: list[list[str]], df: pd.DataFrame) -> pd.DataFrame:
+    """Update Inventory Date in existing sheet rows for same-lifecycle sightings.
+
+    A sighting is same-lifecycle when the same MVA already exists and the incoming
+    Inventory Date is within INCIDENT_WINDOW_DAYS of the latest existing Inventory Date.
+    """
+    if not all_vals:
+        return df
+
+    headers = all_vals[0]
+    mva_idx = headers.index("MVA") if "MVA" in headers else None
+    inventory_idx = _sheet_date_index(headers)
+    if mva_idx is None or inventory_idx is None:
+        return df
+
+    updates: list[tuple[int, str]] = []
+    keep_rows: list[int] = []
+
+    for df_idx, row in df.iterrows():
+        incoming_mva = str(row.get("MVA", "")).strip()
+        incoming_inventory = str(row.get("Inventory Date", "")).strip()
+        incoming_date = _parse_key_date(incoming_inventory)
+        if not incoming_mva or incoming_date is None:
+            keep_rows.append(df_idx)
+            continue
+
+        best_match_row: int | None = None
+        best_match_date: date | None = None
+
+        for sheet_row_idx, sheet_row in enumerate(all_vals[1:], start=2):
+            if len(sheet_row) <= max(mva_idx, inventory_idx):
+                continue
+
+            sheet_mva = sheet_row[mva_idx].strip()
+            if sheet_mva != incoming_mva:
+                continue
+
+            sheet_inventory_date = _parse_key_date(sheet_row[inventory_idx].strip())
+            if sheet_inventory_date is None:
+                continue
+
+            gap_days = (incoming_date - sheet_inventory_date).days
+            if 0 <= gap_days <= INCIDENT_WINDOW_DAYS:
+                if best_match_date is None or sheet_inventory_date > best_match_date:
+                    best_match_date = sheet_inventory_date
+                    best_match_row = sheet_row_idx
+
+        if best_match_row is None:
+            keep_rows.append(df_idx)
+            continue
+
+        updates.append((best_match_row, incoming_inventory))
+
+    for row_index, inventory_date in updates:
+        ws.update_cell(row_index, inventory_idx + 1, inventory_date)
+
+    if not keep_rows:
+        return df.iloc[0:0].copy()
+    return df.loc[keep_rows].copy()
+
+
+def _sheet_date_index(headers: list[str]) -> int | None:
+    """Return the date column index with backward-compatible header support."""
+    if "Inventory Date" in headers:
+        return headers.index("Inventory Date")
+    if "Arrival Date" in headers:
+        return headers.index("Arrival Date")
+    return None
+
+
+def _find_insert_row(all_vals: list[list[str]]) -> int:
     """Return the first row after existing data where new rows should be inserted."""
-    all_vals = ws.get_all_values()
+    if not all_vals:
+        return 2
+
+    headers = all_vals[0]
+    mva_idx = headers.index("MVA") if "MVA" in headers else 1
     insert_row = 2  # default: right after header
-    for i, row in enumerate(all_vals):
-        if len(row) > 1 and row[1].strip():  # column B has MVA
+    for i, row in enumerate(all_vals[1:], start=1):
+        if len(row) > mva_idx and row[mva_idx].strip():
             insert_row = i + 2  # next row (1-indexed)
     return insert_row
 
@@ -1037,26 +1128,25 @@ def _rows_from_dataframe(df: pd.DataFrame) -> list[list[str]]:
     return rows
 
 
-def _load_existing_keys(ws) -> set[str]:
+def _load_existing_keys(all_vals: list[list[str]]) -> set[str]:
     """
     Read existing MVA|Date composite keys from the Google Sheet worksheet
     for idempotency checking.
     """
     existing_keys: set[str] = set()
     try:
-        all_vals = ws.get_all_values()
         if not all_vals:
             return existing_keys
         headers = all_vals[0]
         mva_idx = headers.index("MVA") if "MVA" in headers else None
-        date_idx = headers.index("Arrival Date") if "Arrival Date" in headers else None
+        date_idx = _sheet_date_index(headers)
         if mva_idx is None or date_idx is None:
             return existing_keys
         for row in all_vals[1:]:
             if len(row) > max(mva_idx, date_idx) and row[mva_idx].strip():
                 mva = row[mva_idx].strip()
-                arrival_date = row[date_idx].strip()
-                key = _build_duplicate_key(mva, arrival_date)
+                inventory_date = row[date_idx].strip()
+                key = _build_duplicate_key(mva, inventory_date)
                 existing_keys.add(key)
     except (AttributeError, KeyError, TypeError, ValueError, OSError) as exc:
         log.warning("Could not read existing sheet data — %s", exc)
@@ -1064,9 +1154,9 @@ def _load_existing_keys(ws) -> set[str]:
     return existing_keys
 
 
-def is_duplicate(mva: str, date: str, existing_keys: set[str]) -> bool:
+def is_duplicate(mva: str, inventory_date: str, existing_keys: set[str]) -> bool:
     """Return True if the MVA+Date composite key already exists."""
-    return _build_duplicate_key(mva, date) in existing_keys
+    return _build_duplicate_key(mva, inventory_date) in existing_keys
 
 
 # ─── Notification ─────────────────────────────────────────────────────────────
@@ -1086,7 +1176,7 @@ def notify_order_items(df: pd.DataFrame) -> None:
         return
 
     html = _build_html_table(items)
-    subject = f"Glass Order — {items.iloc[0]['Arrival Date']} ({len(items)} items)"
+    subject = f"Glass Order — {items.iloc[0]['Inventory Date']} ({len(items)} items)"
     outbound = OutboundEmail(
         subject=subject,
         html_body=html,
@@ -1114,7 +1204,7 @@ def _build_html_table(df: pd.DataFrame) -> str:
             vin_cell = f"<td>{row['VIN']}</td>"
 
         rows_html += f"""<tr{style}>
-            <td>{row['Arrival Date']}</td>
+            <td>{row['Inventory Date']}</td>
             <td>{row['MVA']}</td>
             {vin_cell}
             <td>{row['Make']}</td>
@@ -1153,7 +1243,7 @@ def _build_html_table(df: pd.DataFrame) -> str:
         <table>
             <thead>
                 <tr>
-                    <th>Arrival Date</th><th>MVA</th><th>VIN</th>
+                    <th>Inventory Date</th><th>MVA</th><th>VIN</th>
                     <th>Make</th><th>Location</th>
                     <th>Action</th><th>Area</th><th>Claim#</th><th>WorkItem</th>
                 </tr>

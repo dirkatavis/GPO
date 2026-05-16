@@ -224,7 +224,8 @@ class TestFT3_NotificationConsistency:
 
         df_merged = pd.DataFrame([
             {
-                "Arrival Date": "03/09/2026",
+                "Inventory Date": "03/09/2026",
+                "Original Date": "03/09/2026",
                 "MVA": "01712003",
                 "VIN": "N/A",
                 "Make": "N/A",
@@ -235,7 +236,8 @@ class TestFT3_NotificationConsistency:
                 "WorkItem": "verified",
             },
             {
-                "Arrival Date": "03/09/2026",
+                "Inventory Date": "03/09/2026",
+                "Original Date": "03/09/2026",
                 "MVA": "59654641",
                 "VIN": "1HGCY1F44SA083453",
                 "Make": "HONDA ACCORD",

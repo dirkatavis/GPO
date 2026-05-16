@@ -1,7 +1,7 @@
 """AutoGlassNow vendor tracking — Google Sheet updater.
 
 Connects to the GlassClaims worksheet and updates vendor lifecycle
-columns for rows matched by the VIN + Arrival Date compound key.
+columns for rows matched by the VIN + Inventory Date compound key.
 
 Match rules:
   - Exactly 1 match  →  update allowed
@@ -88,7 +88,7 @@ def normalize_date_for_match(raw: str) -> str:
 
 
 class MatchResult:
-    """Outcome of a VIN + Arrival Date sheet row lookup."""
+    """Outcome of a VIN + date sheet row lookup."""
 
     def __init__(self, row_index: Optional[int], status: str, note: str = "") -> None:
         # 1-based Google Sheets row index (includes header row); None if unresolved.
@@ -179,7 +179,7 @@ class VendorSheetUpdater:
     # ─── Row matching ────────────────────────────────────────────────────────
 
     def find_row(self, vin: str, arrival_date: str) -> MatchResult:
-        """Find the sheet row matching VIN + Arrival Date compound key.
+        """Find the sheet row matching VIN + Inventory Date compound key.
 
         Returns a MatchResult describing the outcome.
         """
@@ -190,12 +190,14 @@ class VendorSheetUpdater:
             return MatchResult(None, "not_found", f"Invalid VIN: '{vin}'")
 
         vin_col = self._col_index("VIN")
-        date_col = self._col_index("Arrival Date")
+        date_col = self._col_index("Inventory Date")
+        if date_col is None:
+            date_col = self._col_index("Arrival Date")
 
         if vin_col is None or date_col is None:
             return MatchResult(
                 None, "not_found",
-                "Sheet missing required column(s): VIN or Arrival Date"
+                "Sheet missing required column(s): VIN or Inventory/Arrival Date"
             )
 
         matching_rows: list[int] = []

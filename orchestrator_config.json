@@ -71,6 +71,9 @@
   
   "cycle_completed_retention_comment": "Number of completed cycles to retain in memory before pruning. Higher values = more memory used.",
   "cycle_completed_retention": 1000,
+
+  "incident_window_days_comment": "Same-incident window in days for MVA sightings. Within this window, Inventory Date is updated on the existing row.",
+  "incident_window_days": 3,
   
   "work_item_default_flag_comment": "Default status flag for work items. Typically 'verified' or 'pending'.",
   "work_item_default_flag": "verified",
@@ -80,7 +83,8 @@
   
   "columns_comment": "Column order for Google Sheet output. Order must match the GlassClaims tab structure.",
   "columns": [
-    "Arrival Date",
+    "Inventory Date",
+    "Original Date",
     "MVA",
     "FPO#",
     "VIN",
