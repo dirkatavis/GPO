@@ -24,6 +24,9 @@
 	
 	"delay_seconds_comment": "Default wait time (seconds) for UI element visibility. Adjust for slow/fast networks.",
 	"delay_seconds": 9,
+
+	"wwid_entry_timeout_seconds_comment": "Timeout (seconds) waiting for WWID input field during login. Increase for slow headless renders.",
+	"wwid_entry_timeout_seconds": 25,
 	
 	"mva_entry_delay_seconds_comment": "Wait time (seconds) when entering MVA codes. Increase if OCR or data entry is slow.",
 	"mva_entry_delay_seconds": 30,

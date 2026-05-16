@@ -36,3 +36,6 @@ Thumbs.db
 log/*.log
 log/*.png
 !log/.gitkeep
+
+# Runtime diagnostics artifacts
+artifacts/

@@ -1,6 +1,7 @@
 
 # --- Imports ---
 import os
+from datetime import datetime
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
@@ -39,6 +40,97 @@ def _dump_artifacts(driver, prefix="debug"):
         
     except Exception as e:
         log.error(f"Failed to save debug artifacts: {e}")
+
+
+def _safe_driver_value(getter, fallback="<unavailable>"):
+    """Safely retrieve driver state values used by diagnostics logging."""
+    try:
+        value = getter()
+        return value if value is not None else fallback
+    except Exception:
+        return fallback
+
+
+def _collect_element_snapshot(driver, locator):
+    """Collect best-effort element diagnostics for timeout triage."""
+    try:
+        elements = driver.find_elements(*locator)
+        if not elements:
+            return {"match_count": 0}
+
+        element = elements[0]
+        return {
+            "match_count": len(elements),
+            "displayed": element.is_displayed(),
+            "enabled": element.is_enabled(),
+            "value_len": len(element.get_attribute("value") or ""),
+            "id": element.get_attribute("id") or "",
+            "name": element.get_attribute("name") or "",
+            "type": element.get_attribute("type") or "",
+            "class": element.get_attribute("class") or "",
+            "placeholder": element.get_attribute("placeholder") or "",
+        }
+    except Exception as exc:
+        return {"snapshot_error": str(exc)}
+
+
+def _should_capture_timeout_artifacts():
+    """Return True when timeout artifact capture is explicitly enabled."""
+    return os.getenv("GLASS_CAPTURE_TIMEOUT_ARTIFACTS", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _log_send_text_timeout_diagnostics(driver, locator, text):
+    """Emit high-signal diagnostics when send_text times out."""
+    url = _safe_driver_value(lambda: driver.current_url)
+    title = _safe_driver_value(lambda: driver.title)
+    ready_state = _safe_driver_value(
+        lambda: driver.execute_script("return document.readyState")
+    )
+    active_element = _safe_driver_value(
+        lambda: driver.execute_script(
+            """
+            const el = document.activeElement;
+            if (!el) return null;
+            return {
+                tag: el.tagName,
+                id: el.id || "",
+                name: el.name || "",
+                className: el.className || ""
+            };
+            """
+        ),
+        fallback={},
+    )
+    element_snapshot = _collect_element_snapshot(driver, locator)
+
+    log.error(
+        "[DIAG][SEND_TEXT_TIMEOUT] locator=%s text_len=%d url=%s title=%s ready_state=%s",
+        locator,
+        len(text or ""),
+        url,
+        title,
+        ready_state,
+    )
+    log.error(
+        "[DIAG][SEND_TEXT_TIMEOUT] active_element=%s element_snapshot=%s",
+        active_element,
+        element_snapshot,
+    )
+
+    if _should_capture_timeout_artifacts():
+        # Persist artifacts per-failure so flaky runs can be compared side-by-side.
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        _dump_artifacts(driver, prefix=f"send_text_timeout_{stamp}")
+    else:
+        log.info(
+            "[DIAG][SEND_TEXT_TIMEOUT] Artifact capture skipped "
+            "(set GLASS_CAPTURE_TIMEOUT_ARTIFACTS=1 to enable)"
+        )
 
 def navigate_back_to_home(driver):
     """
@@ -202,6 +294,7 @@ def send_text(driver, locator, text, timeout=10):
         return True
     except TimeoutException:
         log.warning(f"Timeout waiting to send text")
+        _log_send_text_timeout_diagnostics(driver, locator, text)
         return False
     except Exception as e:
         log.error(f"Error sending text: {e}")
