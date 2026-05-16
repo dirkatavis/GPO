@@ -74,6 +74,16 @@ def _collect_element_snapshot(driver, locator):
         return {"snapshot_error": str(exc)}
 
 
+def _should_capture_timeout_artifacts():
+    """Return True when timeout artifact capture is explicitly enabled."""
+    return os.getenv("GLASS_CAPTURE_TIMEOUT_ARTIFACTS", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def _log_send_text_timeout_diagnostics(driver, locator, text):
     """Emit high-signal diagnostics when send_text times out."""
     url = _safe_driver_value(lambda: driver.current_url)
@@ -112,9 +122,15 @@ def _log_send_text_timeout_diagnostics(driver, locator, text):
         element_snapshot,
     )
 
-    # Persist artifacts per-failure so flaky runs can be compared side-by-side.
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    _dump_artifacts(driver, prefix=f"send_text_timeout_{stamp}")
+    if _should_capture_timeout_artifacts():
+        # Persist artifacts per-failure so flaky runs can be compared side-by-side.
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        _dump_artifacts(driver, prefix=f"send_text_timeout_{stamp}")
+    else:
+        log.info(
+            "[DIAG][SEND_TEXT_TIMEOUT] Artifact capture skipped "
+            "(set GLASS_CAPTURE_TIMEOUT_ARTIFACTS=1 to enable)"
+        )
 
 def navigate_back_to_home(driver):
     """
