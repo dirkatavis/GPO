@@ -241,8 +241,8 @@ class TestIT4_SpreadsheetPersistence:
         assert written[0][2] == "59340121"
 
     @patch("GlassOrchestrator._get_worksheet")
-    def test_idempotency_prevents_duplicate(self, mock_get_ws):
-        """Same MVA+Date already in sheet → no rows inserted."""
+    def test_existing_row_does_not_block_write(self, mock_get_ws):
+        """Same MVA/date already in sheet still results in a newly inserted row."""
         existing = [["03/05/2026", "03/05/2026", "59340120", "", "1HGCM82633A004352",
                       "Windshield", "APO", "Replace(AGN)", "Windshield", "Missing", "verified"]]
         ws = self._mock_worksheet(existing)
@@ -251,12 +251,12 @@ class TestIT4_SpreadsheetPersistence:
         df = self._make_test_df(["59340120"])
         new_rows = persist_new_rows(df)
 
-        assert len(new_rows) == 0
-        ws.insert_rows.assert_not_called()
+        assert len(new_rows) == 1
+        ws.insert_rows.assert_called_once()
 
     @patch("GlassOrchestrator._get_worksheet")
-    def test_idempotency_normalizes_date_format(self, mock_get_ws):
-        """Sheet date '5/2/2026' should match incoming '05/02/2026'."""
+    def test_existing_row_with_different_date_format_still_writes(self, mock_get_ws):
+        """Date-format differences do not suppress inserts when dedupe is disabled."""
         existing = [["5/2/2026", "5/2/2026", "59193750", "", "KNDPU3DG9T7301521",
                      "KIA SPORTAGE 2WD", "APO", "Replace(AGN)", "Windshield", "Listed", "verified"]]
         ws = self._mock_worksheet(existing)
@@ -265,8 +265,8 @@ class TestIT4_SpreadsheetPersistence:
         df = self._make_test_df(["59193750"], date="05/02/2026")
         new_rows = persist_new_rows(df)
 
-        assert len(new_rows) == 0
-        ws.insert_rows.assert_not_called()
+        assert len(new_rows) == 1
+        ws.insert_rows.assert_called_once()
 
     @patch("GlassOrchestrator._get_worksheet")
     def test_correct_columns_written(self, mock_get_ws):
@@ -283,8 +283,8 @@ class TestIT4_SpreadsheetPersistence:
                                 "Windshield", "APO", "Replace(AGN)", "Windshield", "Missing", "verified"]
 
     @patch("GlassOrchestrator._get_worksheet")
-    def test_same_lifecycle_updates_inventory_date_and_preserves_original_date(self, mock_get_ws):
-        """Same-MVA sighting inside window should update Inventory Date, not insert new row."""
+    def test_same_lifecycle_still_inserts_new_row(self, mock_get_ws):
+        """Same-MVA sighting inside window inserts a new row when dedupe is disabled."""
         existing = [["03/05/2026", "03/05/2026", "59340120", "", "1HGCM82633A004352",
                      "Windshield", "APO", "Replace(AGN)", "Windshield", "Missing", "verified"]]
         ws = self._mock_worksheet(existing)
@@ -293,9 +293,9 @@ class TestIT4_SpreadsheetPersistence:
         df = self._make_test_df(["59340120"], date="03/07/2026")
         new_rows = persist_new_rows(df)
 
-        assert len(new_rows) == 0
-        ws.insert_rows.assert_not_called()
-        ws.update_cell.assert_called_once_with(2, 1, "03/07/2026")
+        assert len(new_rows) == 1
+        ws.insert_rows.assert_called_once()
+        ws.update_cell.assert_not_called()
 
     @patch("GlassOrchestrator._get_worksheet")
     def test_new_lifecycle_inserts_new_row_after_window(self, mock_get_ws):

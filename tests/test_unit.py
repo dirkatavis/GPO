@@ -331,7 +331,7 @@ class TestUT2_HTMLExtraction:
 
 
 class TestUT3_Idempotency:
-    """Verify the duplicate-detection logic using MVA+Date composite keys."""
+    """Verify deprecated duplicate checks always return False with no-dedup policy."""
 
     MOCK_EXISTING = {
         "59340120|2026-03-05",
@@ -339,8 +339,8 @@ class TestUT3_Idempotency:
         "59340122|2026-03-04",
     }
 
-    def test_duplicate_returns_true(self):
-        assert is_duplicate("59340120", "03/05/2026", self.MOCK_EXISTING) is True
+    def test_duplicate_returns_false(self):
+        assert is_duplicate("59340120", "03/05/2026", self.MOCK_EXISTING) is False
 
     def test_new_mva_returns_false(self):
         assert is_duplicate("99999999", "03/05/2026", self.MOCK_EXISTING) is False
@@ -351,8 +351,8 @@ class TestUT3_Idempotency:
     def test_empty_existing_returns_false(self):
         assert is_duplicate("59340120", "03/05/2026", set()) is False
 
-    def test_non_padded_date_matches_existing_key(self):
-        assert is_duplicate("59340120", "3/5/2026", self.MOCK_EXISTING) is True
+    def test_non_padded_date_returns_false(self):
+        assert is_duplicate("59340120", "3/5/2026", self.MOCK_EXISTING) is False
 
 
 # ─── UT-4: Sanitization ──────────────────────────────────────────────────────
