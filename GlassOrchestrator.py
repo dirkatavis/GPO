@@ -791,7 +791,7 @@ def apply_cycle_day_tracking(manifest: dict[str, dict], mva_list: list[str], sna
     cycle_days_by_mva = tracker.record_snapshot(mva_list, snapshot_date.date())
     for mva, days in cycle_days_by_mva.items():
         if mva in manifest:
-            # Kept out of the Google sheet 8-column contract; useful for metrics tab/reporting.
+            # Kept out of the Google Sheet row contract (COLUMNS); useful for metrics tab/reporting.
             manifest[mva]["Cycle Days"] = days
     log.info(
         "Cycle tracking: %d active MVAs recorded (grace=%d day(s))",
@@ -953,7 +953,7 @@ def persist_new_rows(df: pd.DataFrame) -> pd.DataFrame:
     # Find the insertion point: first empty row after last data row (column B = MVA)
     insert_row = _find_insert_row(all_vals)
 
-    # Build rows as lists matching the 8-column contract
+    # Build rows as lists matching the configured sheet column contract (COLUMNS)
     rows_to_insert = _rows_from_dataframe(df)
 
     # Insert rows above the summary section (pushes summary down automatically).
@@ -990,14 +990,6 @@ def _normalize_arrival_date_key(value: object) -> str:
 
     return raw
 
-
-
-def _build_duplicate_key(mva: object, inventory_date: object, original_date: object) -> str:
-    """Build a normalized MVA|Inventory Date|Original Date idempotency key."""
-    mva_str = str(mva).strip()
-    inventory_str = _normalize_arrival_date_key(inventory_date)
-    original_str = _normalize_arrival_date_key(original_date)
-    return f"{mva_str}|{inventory_str}|{original_str}"
 
 
 def _filter_new_rows(df: pd.DataFrame, existing_keys: set[str]) -> pd.DataFrame:
