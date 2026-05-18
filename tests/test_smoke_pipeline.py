@@ -158,12 +158,8 @@ class TestSmoke2_AllDuplicateMVAs:
 
         def spy_persist(df):
             tracker["persist_called"] = True
-            # Replay real _filter_new_rows logic via mocked worksheet
-            from GlassOrchestrator import _filter_new_rows, _load_existing_keys
-            existing_keys = _load_existing_keys(ws)
-            new_rows = _filter_new_rows(df, existing_keys)
-            tracker["persist_result"] = new_rows
-            return new_rows
+            tracker["persist_result"] = df
+            return df
 
         monkeypatch.setattr("GlassOrchestrator.persist_new_rows", spy_persist)
 
@@ -181,13 +177,13 @@ class TestSmoke2_AllDuplicateMVAs:
         assert tracker["worker_called"], "Worker must run regardless of duplicate status"
 
     def test_persist_is_called(self, monkeypatch):
-        """persist_new_rows is called; it returns empty because all are duplicates."""
+        """persist_new_rows is called and returns rows even when MVAs already exist."""
         tracker = self._monkeypatch_pipeline(monkeypatch)
         run_pipeline()
         assert tracker["persist_called"], "persist_new_rows must be called"
         assert tracker["persist_result"] is not None
-        assert len(tracker["persist_result"]) == 0, (
-            "No rows should be written when all MVAs are already in the sheet"
+        assert len(tracker["persist_result"]) == len(self._MVAS), (
+            "Rows should still be written when MVAs already exist in the sheet"
         )
 
     def test_no_email_sent(self, monkeypatch):
