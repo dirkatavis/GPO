@@ -940,40 +940,29 @@ def persist_new_rows(df: pd.DataFrame) -> pd.DataFrame:
     Append merged data to Google Sheet 'ATL_Data 2026 : GlassClaims'.
 
     Inserts new rows above the summary section so formulas stay intact.
-    Idempotency: Composite key (MVA + Inventory Date) is checked against
-    existing rows. Duplicate rows are silently skipped.
+    No deduplication: All rows are always written to the sheet, regardless of prior entries.
 
-    Returns the DataFrame of actually-new rows written.
+    Returns the DataFrame of all rows written.
     """
     log.info("Persistence: Appending to Google Sheet [%s] …", SHEET_NAME)
 
     ws = _get_worksheet()
     all_vals = ws.get_all_values()
 
-    # Update same-lifecycle sightings in place (Inventory Date), then insert only truly new rows.
-    df = _apply_same_lifecycle_inventory_updates(ws, all_vals, df)
-
-    # Determine which rows are truly new
-    existing_keys = _load_existing_keys(all_vals)
-    new_rows = _filter_new_rows(df, existing_keys)
-
-    if new_rows.empty:
-        log.info("Persistence: No new rows to write (all duplicates)")
-        return new_rows
-
+    # No deduplication: all rows are always written
     # Find the insertion point: first empty row after last data row (column B = MVA)
     insert_row = _find_insert_row(all_vals)
 
     # Build rows as lists matching the 8-column contract
-    rows_to_insert = _rows_from_dataframe(new_rows)
+    rows_to_insert = _rows_from_dataframe(df)
 
     # Insert rows above the summary section (pushes summary down automatically).
     # inherit_from_before=True: new rows inherit formatting from the data row above,
     # not the summary row below (which is orange/bold and would corrupt the inserted rows).
     ws.insert_rows(rows_to_insert, row=insert_row, inherit_from_before=True)
 
-    log.info("Persistence: Wrote %d new rows to Google Sheet at row %d", len(new_rows), insert_row)
-    return new_rows
+    log.info("Persistence: Wrote %d new rows to Google Sheet at row %d", len(df), insert_row)
+    return df
 
 
 def _normalize_arrival_date_key(value: object) -> str:
@@ -1002,17 +991,18 @@ def _normalize_arrival_date_key(value: object) -> str:
     return raw
 
 
-def _build_duplicate_key(mva: object, inventory_date: object) -> str:
-    """Build a normalized MVA|Inventory Date idempotency key."""
-    return f"{str(mva).strip()}|{_normalize_arrival_date_key(inventory_date)}"
+
+def _build_duplicate_key(mva: object, inventory_date: object, original_date: object) -> str:
+    """Build a normalized MVA|Inventory Date|Original Date idempotency key."""
+    mva_str = str(mva).strip()
+    inventory_str = _normalize_arrival_date_key(inventory_date)
+    original_str = _normalize_arrival_date_key(original_date)
+    return f"{mva_str}|{inventory_str}|{original_str}"
 
 
 def _filter_new_rows(df: pd.DataFrame, existing_keys: set[str]) -> pd.DataFrame:
-    """Return only rows not already present in the sheet (MVA|Inventory Date key)."""
-    mva_series = df["MVA"].astype(str).str.strip()
-    date_series = df["Inventory Date"].astype(str).map(_normalize_arrival_date_key)
-    keys = mva_series + "|" + date_series
-    return df[~keys.isin(existing_keys)].copy()
+    """[DEPRECATED] No deduplication: all rows are always written."""
+    return df.copy()
 
 
 def _parse_key_date(raw_date: object) -> date | None:
@@ -1129,34 +1119,13 @@ def _rows_from_dataframe(df: pd.DataFrame) -> list[list[str]]:
 
 
 def _load_existing_keys(all_vals: list[list[str]]) -> set[str]:
-    """
-    Read existing MVA|Date composite keys from the Google Sheet worksheet
-    for idempotency checking.
-    """
-    existing_keys: set[str] = set()
-    try:
-        if not all_vals:
-            return existing_keys
-        headers = all_vals[0]
-        mva_idx = headers.index("MVA") if "MVA" in headers else None
-        date_idx = _sheet_date_index(headers)
-        if mva_idx is None or date_idx is None:
-            return existing_keys
-        for row in all_vals[1:]:
-            if len(row) > max(mva_idx, date_idx) and row[mva_idx].strip():
-                mva = row[mva_idx].strip()
-                inventory_date = row[date_idx].strip()
-                key = _build_duplicate_key(mva, inventory_date)
-                existing_keys.add(key)
-    except (AttributeError, KeyError, TypeError, ValueError, OSError) as exc:
-        log.warning("Could not read existing sheet data — %s", exc)
-        #This is a major problem and breaks the entire flow
-    return existing_keys
+    """[DEPRECATED] No deduplication: all rows are always written."""
+    return set()
 
 
 def is_duplicate(mva: str, inventory_date: str, existing_keys: set[str]) -> bool:
-    """Return True if the MVA+Date composite key already exists."""
-    return _build_duplicate_key(mva, inventory_date) in existing_keys
+    """[DEPRECATED] No deduplication: rows are never treated as duplicates."""
+    return False
 
 
 # ─── Notification ─────────────────────────────────────────────────────────────
