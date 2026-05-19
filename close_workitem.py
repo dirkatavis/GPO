@@ -126,6 +126,8 @@ async def _capture_playwright_screenshot(page: "Page", label: str, mva: str) -> 
 
 async def _playwright_close_work_item(page: "Page", mva: str, complaint_type: str) -> tuple[str, str]:
     """Find the open work item tile of the specified type, expand it, and mark it complete.
+    
+    Verifies the tile's actual complaint type matches the expected type before attempting close.
 
     Returns (result_constant, tile_detail_text).
     """
@@ -141,8 +143,23 @@ async def _playwright_close_work_item(page: "Page", mva: str, complaint_type: st
     if count == 0:
         return RESULT_NOT_FOUND, ""
 
-    raw = (await tiles.first.inner_text()).strip()
+    tile = tiles.first
+    raw = (await tile.inner_text()).strip()
     detail = " | ".join(line.strip() for line in raw.splitlines() if line.strip())
+    
+    # Extract the tile title to verify the actual complaint type
+    title_elem = tile.locator("[class*='fleet-operations-pwa__scan-record-header-title__']")
+    if await title_elem.count() > 0:
+        tile_title = (await title_elem.inner_text()).strip().upper()
+        log.info("[CLOSE] %s - tile title: %s", mva, tile_title)
+        
+        # Verify the tile type matches expected complaint_type
+        if complaint_type.upper() == "GLASS" and "GLASS" not in tile_title:
+            log.warning("[CLOSE] %s - Type mismatch: expected Glass but tile is: %s", mva, tile_title)
+            return RESULT_NOT_FOUND, ""
+        elif complaint_type.upper() == "PM" and "PM" not in tile_title:
+            log.warning("[CLOSE] %s - Type mismatch: expected PM but tile is: %s", mva, tile_title)
+            return RESULT_NOT_FOUND, ""
 
     await open_glass_work_item_tile(page, mva)
     await complete_glass_work_item(page, mva)
