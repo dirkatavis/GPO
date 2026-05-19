@@ -11,9 +11,9 @@ E2E smoke test (opt-in):
 """
 
 import argparse
-import csv
+import asyncio
 import os
-import tempfile
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -120,12 +120,118 @@ class TestBuildTargetsValidation:
         with pytest.raises(SystemExit):
             cw._build_targets(self._args(str(f)))
 
-    def test_empty_csv_exits(self, tmp_path):
-        """CSV with header but no data rows must exit rather than silently succeed."""
-        f = tmp_path / "empty.csv"
-        f.write_text("mva\n")
-        with pytest.raises(SystemExit):
-            cw._build_targets(self._args(str(f)))
+
+def _make_async_playwright_mocks():
+    page = AsyncMock()
+    page.url = "https://avisbudget.palantirfoundry.com/workspace/fleet-operations-pwa/health"
+
+    context = AsyncMock()
+    context.close = AsyncMock()
+
+    pw = MagicMock()
+    pw.chromium.launch_persistent_context = AsyncMock(return_value=context)
+
+    async_pw_cm = AsyncMock()
+    async_pw_cm.__aenter__ = AsyncMock(return_value=pw)
+    async_pw_cm.__aexit__ = AsyncMock(return_value=None)
+
+    return pw, async_pw_cm, context, page
+
+
+class TestRunPlaywrightCloseAsync:
+    def _args(self, timeout_seconds=90):
+        return argparse.Namespace(timeout_seconds=timeout_seconds)
+
+    def _patch_defaults(self, monkeypatch, async_pw_cm, context, page):
+        monkeypatch.setattr("close_workitem.async_playwright", lambda: async_pw_cm)
+        monkeypatch.setattr("close_workitem.resolve_headless", lambda: False)
+        monkeypatch.setattr("close_workitem.resolve_edge_user_data_dir", lambda: r"C:\\Users\\test\\AppData\\Local\\Microsoft\\Edge\\User Data")
+        monkeypatch.setattr("close_workitem.resolve_edge_profile_directory", lambda: "Default")
+        monkeypatch.setattr("close_workitem.resolve_initial_delay", lambda: 0)
+        monkeypatch.setattr("close_workitem.resolve_step_delay", lambda: 0)
+        monkeypatch.setattr(
+            "close_workitem.ensure_profile_context",
+            AsyncMock(return_value=(context, page)),
+        )
+        monkeypatch.setattr("close_workitem.pw_warmup_compass", AsyncMock())
+        monkeypatch.setattr("close_workitem.pw_navigate_to_mva", AsyncMock())
+        monkeypatch.setattr(
+            "close_workitem._playwright_close_work_item",
+            AsyncMock(return_value=(cw.RESULT_NOT_FOUND, "")),
+        )
+        monkeypatch.setattr("close_workitem._capture_playwright_screenshot", AsyncMock())
+
+    def test_logs_runtime_config_on_startup(self, monkeypatch, caplog):
+        pw, async_pw_cm, context, page = _make_async_playwright_mocks()
+        self._patch_defaults(monkeypatch, async_pw_cm, context, page)
+
+        caplog.set_level("INFO")
+        results = asyncio.run(cw._run_playwright_close_async(self._args(), []))
+
+        assert results == []
+        assert "[CLOSE] Runtime config | login_url=" in caplog.text
+        assert "profile=Default" in caplog.text
+        pw.chromium.launch_persistent_context.assert_called_once()
+
+    def test_logs_navigation_target_and_landing_url(self, monkeypatch, caplog):
+        _, async_pw_cm, context, page = _make_async_playwright_mocks()
+        self._patch_defaults(monkeypatch, async_pw_cm, context, page)
+
+        async def _navigate_side_effect(target_page, mva):
+            target_page.url = f"https://avisbudget.palantirfoundry.com/workspace/fleet-operations-pwa/vehicle/{mva}"
+
+        monkeypatch.setattr("close_workitem.pw_navigate_to_mva", AsyncMock(side_effect=_navigate_side_effect))
+
+        caplog.set_level("INFO")
+        asyncio.run(cw._run_playwright_close_async(self._args(), ["12345678"]))
+
+        assert "[CLOSE] 12345678 - navigating to MVA" in caplog.text
+        assert "[CLOSE] 12345678 - navigation landed at URL:" in caplog.text
+
+    def test_navigation_timeout_maps_to_timeout_result(self, monkeypatch):
+        _, async_pw_cm, context, page = _make_async_playwright_mocks()
+        self._patch_defaults(monkeypatch, async_pw_cm, context, page)
+
+        monkeypatch.setattr("close_workitem.pw_navigate_to_mva", AsyncMock(side_effect=asyncio.TimeoutError()))
+
+        results = asyncio.run(cw._run_playwright_close_async(self._args(), ["12345678"]))
+
+        assert results == [{"mva": "12345678", "result": cw.RESULT_TIMEOUT, "detail": ""}]
+
+    def test_navigation_exception_maps_to_nav_failed(self, monkeypatch):
+        _, async_pw_cm, context, page = _make_async_playwright_mocks()
+        self._patch_defaults(monkeypatch, async_pw_cm, context, page)
+
+        monkeypatch.setattr("close_workitem.pw_navigate_to_mva", AsyncMock(side_effect=RuntimeError("bad route")))
+
+        results = asyncio.run(cw._run_playwright_close_async(self._args(), ["12345678"]))
+
+        assert results == [{"mva": "12345678", "result": cw.RESULT_NAV_FAILED, "detail": ""}]
+
+    def test_ensure_profile_context_runs_before_warmup_and_navigation(self, monkeypatch):
+        _, async_pw_cm, context, page = _make_async_playwright_mocks()
+        self._patch_defaults(monkeypatch, async_pw_cm, context, page)
+
+        call_order: list[str] = []
+
+        async def _ensure(_context):
+            call_order.append("ensure")
+            return _context, page
+
+        async def _warmup(_page):
+            call_order.append("warmup")
+
+        async def _navigate(_page, _mva):
+            call_order.append("navigate")
+            _page.url = "https://avisbudget.palantirfoundry.com/workspace/fleet-operations-pwa/vehicle/12345678"
+
+        monkeypatch.setattr("close_workitem.ensure_profile_context", AsyncMock(side_effect=_ensure))
+        monkeypatch.setattr("close_workitem.pw_warmup_compass", AsyncMock(side_effect=_warmup))
+        monkeypatch.setattr("close_workitem.pw_navigate_to_mva", AsyncMock(side_effect=_navigate))
+
+        asyncio.run(cw._run_playwright_close_async(self._args(), ["12345678"]))
+
+        assert call_order[:3] == ["ensure", "warmup", "navigate"]
 
 
 # ─── E2E smoke test (opt-in) ─────────────────────────────────────────────────

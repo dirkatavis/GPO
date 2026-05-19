@@ -14,6 +14,7 @@ from utils.logger import log
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from playwright.async_api import async_playwright
 from playwright_prototype.config import (
+    LOGIN_URL,
     resolve_edge_profile_directory,
     resolve_edge_user_data_dir,
     resolve_headless,
@@ -36,6 +37,17 @@ RESULT_ERROR = "error"
 RESULT_TIMEOUT = "timeout"
 
 _GLASS_PATTERN = re.compile(r"glass|windshield|crack|chip|window", re.I)
+
+
+def _validate_post_navigation_url(url: str, mva: str) -> None:
+    """Fail fast if navigation lands on an auth or non-Foundry page."""
+    lowered = (url or "").lower()
+    if not lowered:
+        raise RuntimeError(f"[CLOSE] {mva} - navigation landed on empty URL")
+    if "login.microsoftonline.com" in lowered or "m365.cloud.microsoft" in lowered:
+        raise RuntimeError(f"[CLOSE] {mva} - navigation landed on auth page: {url}")
+    if "palantirfoundry.com" not in lowered:
+        raise RuntimeError(f"[CLOSE] {mva} - navigation landed off Foundry domain: {url}")
 
 
 def _load_csv(path: str) -> list[dict]:
@@ -105,7 +117,21 @@ async def _run_playwright_close_async(args: argparse.Namespace, targets: list[st
     headless = resolve_headless()
     edge_user_data_dir = resolve_edge_user_data_dir()
     edge_profile_directory = resolve_edge_profile_directory()
+    initial_delay_ms = resolve_initial_delay()
     step_delay_ms = resolve_step_delay()
+
+    log.info("[CLOSE] %s", "=" * 50)
+    log.info("[CLOSE] Close workflow - %d MVA(s)", len(targets))
+    log.info("[CLOSE] Runtime config | login_url=%s", LOGIN_URL)
+    log.info(
+        "[CLOSE] Runtime config | profile=%s | headless=%s | initial_delay_ms=%s | step_delay_ms=%s | timeout_seconds=%s",
+        edge_profile_directory,
+        headless,
+        initial_delay_ms,
+        step_delay_ms,
+        args.timeout_seconds,
+    )
+    log.info("[CLOSE] %s", "=" * 50)
 
     async with async_playwright() as pw:
         context = await pw.chromium.launch_persistent_context(
@@ -123,7 +149,6 @@ async def _run_playwright_close_async(args: argparse.Namespace, targets: list[st
         try:
             _, page = await ensure_profile_context(context)
 
-            initial_delay_ms = resolve_initial_delay()
             if initial_delay_ms > 0:
                 await page.wait_for_timeout(initial_delay_ms)
 
@@ -154,7 +179,11 @@ async def _run_playwright_close_async(args: argparse.Namespace, targets: list[st
                 started = time.monotonic()
 
                 try:
+                    log.info("[CLOSE] %s - navigating to MVA", mva)
                     await asyncio.wait_for(pw_navigate_to_mva(page, mva), timeout=args.timeout_seconds)
+                    landing_url = page.url
+                    log.info("[CLOSE] %s - navigation landed at URL: %s", mva, landing_url)
+                    _validate_post_navigation_url(landing_url, mva)
                     if step_delay_ms > 0:
                         await page.wait_for_timeout(step_delay_ms)
                 except asyncio.TimeoutError:
