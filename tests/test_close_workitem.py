@@ -156,6 +156,7 @@ class TestRunPlaywrightCloseAsync:
 
     def _patch_defaults(self, monkeypatch, async_pw_cm, context, page):
         monkeypatch.setattr("close_workitem.async_playwright", lambda: async_pw_cm)
+        monkeypatch.setattr("close_workitem._is_edge_running", lambda: False)
         monkeypatch.setattr("close_workitem.resolve_headless", lambda: False)
         monkeypatch.setattr("close_workitem.resolve_edge_user_data_dir", lambda: r"C:\\Users\\test\\AppData\\Local\\Microsoft\\Edge\\User Data")
         monkeypatch.setattr("close_workitem.resolve_edge_profile_directory", lambda: "Default")

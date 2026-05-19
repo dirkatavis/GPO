@@ -5,6 +5,7 @@ import asyncio
 import csv
 import os
 import re
+import subprocess
 import sys
 import time
 from typing import TYPE_CHECKING
@@ -44,6 +45,15 @@ COMPLAINT_TYPE_PATTERNS = {
     "Glass": _GLASS_PATTERN,
     "PM": _PM_PATTERN,
 }
+
+
+def _is_edge_running() -> bool:
+    """Return True if any msedge.exe process is currently running."""
+    result = subprocess.run(
+        ["tasklist", "/FI", "IMAGENAME eq msedge.exe", "/NH"],
+        capture_output=True, text=True
+    )
+    return "msedge.exe" in result.stdout
 
 
 def _get_valid_complaint_types() -> list[str]:
@@ -134,9 +144,8 @@ async def _playwright_close_work_item(page: "Page", mva: str, complaint_type: st
     pattern = COMPLAINT_TYPE_PATTERNS.get(complaint_type, _GLASS_PATTERN)
     
     tiles = page.locator("div[class*='fleet-operations-pwa__scan-record__']").filter(
-        has_text=pattern
-    ).filter(
-        has_text=re.compile(r"open", re.I)
+        has=page.locator("[class*='fleet-operations-pwa__scan-record-header-title-right__']",
+                         has_text=re.compile(r"^open$", re.I))
     )
 
     count = await tiles.count()
@@ -147,19 +156,20 @@ async def _playwright_close_work_item(page: "Page", mva: str, complaint_type: st
     raw = (await tile.inner_text()).strip()
     detail = " | ".join(line.strip() for line in raw.splitlines() if line.strip())
     
-    # Extract the tile title to verify the actual complaint type
-    title_elem = tile.locator("[class*='fleet-operations-pwa__scan-record-header-title__']")
-    if await title_elem.count() > 0:
-        tile_title = (await title_elem.inner_text()).strip().upper()
-        log.info("[CLOSE] %s - tile title: %s", mva, tile_title)
+    # Read the Complaints row to verify the actual complaint type
+    complaints_elem = tile.locator("[class*='fleet-operations-pwa__left__']").filter(
+        has_text=re.compile(r"complaints\s*:", re.I)
+    )
+    if await complaints_elem.count() > 0:
+        complaints_text = (await complaints_elem.first.inner_text()).strip()
+        log.info("[CLOSE] %s - complaints row: %s", mva, complaints_text)
         
-        # Verify the tile type matches expected complaint_type
-        if complaint_type.upper() == "GLASS" and "GLASS" not in tile_title:
-            log.warning("[CLOSE] %s - Type mismatch: expected Glass but tile is: %s", mva, tile_title)
-            return RESULT_NOT_FOUND, ""
-        elif complaint_type.upper() == "PM" and "PM" not in tile_title:
-            log.warning("[CLOSE] %s - Type mismatch: expected PM but tile is: %s", mva, tile_title)
-            return RESULT_NOT_FOUND, ""
+        match = re.search(r"complaints\s*:\s*(.+)", complaints_text, re.I)
+        if match:
+            actual_complaint = match.group(1).strip()
+            if not pattern.search(actual_complaint):
+                log.warning("[CLOSE] %s - Type mismatch: expected %s but complaints says: %s", mva, complaint_type, actual_complaint)
+                return RESULT_NOT_FOUND, ""
 
     await open_glass_work_item_tile(page, mva)
     await complete_glass_work_item(page, mva)
@@ -193,6 +203,23 @@ async def _run_playwright_close_async(args: argparse.Namespace, targets: list[di
         args.timeout_seconds,
     )
     log.info("[CLOSE] %s", "=" * 50)
+
+    # Edge must not be running when using launch_persistent_context —
+    # the user-data-dir lock prevents a second instance from starting.
+    # If residual background processes remain after the user closes the UI,
+    # kill them automatically and wait briefly before launching.
+    if _is_edge_running():
+        log.warning("[CLOSE] Edge processes detected — killing residual processes before launch...")
+        subprocess.run(["taskkill", "/F", "/IM", "msedge.exe", "/T"],
+                       capture_output=True, text=True)
+        time.sleep(2)
+        if _is_edge_running():
+            log.error(
+                "[CLOSE] Microsoft Edge is still running after kill attempt. "
+                "Please close all Edge windows manually and try again."
+            )
+            return []
+        log.info("[CLOSE] Edge processes cleared — proceeding with launch.")
 
     async with async_playwright() as pw:
         context = await pw.chromium.launch_persistent_context(
@@ -243,6 +270,14 @@ async def _run_playwright_close_async(args: argparse.Namespace, targets: list[di
                 started = time.monotonic()
 
                 try:
+                    # If the browser landed on a deep-link work item URL from the previous
+                    # MVA, the MVA input field won't be present. Navigate back to the base
+                    # health page first so _enter_mva can find the input field.
+                    if "/viewWorkItem/" in page.url or "/workItem/" in page.url:
+                        log.info("[CLOSE] %s - returning to base health page before navigation", mva)
+                        await page.goto(LOGIN_URL, wait_until="domcontentloaded")
+                        await page.wait_for_timeout(step_delay_ms or 1000)
+
                     log.info("[CLOSE] %s - navigating to MVA", mva)
                     await asyncio.wait_for(pw_navigate_to_mva(page, mva), timeout=args.timeout_seconds)
                     landing_url = page.url
