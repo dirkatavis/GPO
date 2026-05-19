@@ -10,7 +10,7 @@ A modular Python pipeline for vehicle glass procurement, built on a **6-phase ar
 | 2 | **Parsing** | Regex triage (`^(\d{8})([rc]*)$`), build session manifest |
 | 3 | **Worker** | Write MVAs to CSV, invoke `GlassDataParser.py` subprocess |
 | 4 | **Data Merge** | Left-join manifest with scraper results; missing VIN → `N/A` |
-| 5 | **Persistence** | Append to Google Sheet (`GlassClaims` tab), idempotent on MVA+Arrival Date |
+| 5 | **Persistence** | Append all parsed rows to Google Sheet (`GlassClaims` tab); carry forward Original Date within incident window |
 | 6 | **Notification** | HTML email for Replacement items; red-flagged rows for missing VINs |
 
 ## Suffix Rules
@@ -23,18 +23,25 @@ A modular Python pipeline for vehicle glass procurement, built on a **6-phase ar
 ## Data Contract — `ATL_Data 2026 : GlassClaims`
 
 The pipeline output maps 1-to-1 with the `GlassClaims` tab in the master workbook.
-Phase 5 inserts rows above the summary section; the idempotency key is **`MVA | Arrival Date`**.
+Phase 5 inserts rows above the summary section and always appends rows (no deduplication).
+
+For returning MVAs, `Original Date` is carried forward from existing sheet rows only when
+the prior row's `Inventory Date` is within `incident_window_days` (default: 3 days) of the
+new row's `Inventory Date`.
 
 | # | Column | Source | Phase | Notes |
 |---|--------|--------|-------|-------|
-| 1 | **Arrival Date** | Email `Date` header | 2 | `MM/DD/YYYY` |
-| 2 | **MVA** | Orca Scan Description | 2 | 8-digit, suffixes stripped |
-| 3 | **VIN** | CGI scraper (`GlassResults.txt`) | 4 | `N/A` if scraper miss |
-| 4 | **Make** | CGI scraper `Desc` column | 4 | Populated by Phase 4 merge |
-| 5 | **Location** | Email Type column suffix | 2 | `0420APO` → APO, `0420BB` → BB |
-| 6 | **Damage Type** | Suffix `r` → Repair | 2 | Default: `Replacement` |
-| 7 | **Claim#** | Suffix `c` → Listed | 2 | Default: `Missing` |
-| 8 | **WorkItem** | Runtime config | 2 | Defaults to `verified` |
+| 1 | **Inventory Date** | Email Type/date parsing | 2 | `MM/DD/YYYY` |
+| 2 | **Original Date** | Inventory Date at first sighting; carried forward for same incident | 2/5 | Uses earliest qualifying prior value within incident window |
+| 3 | **MVA** | Orca Scan Description | 2 | 8-digit, suffixes stripped |
+| 4 | **FPO#** | Manual workflow | 2 | Pipeline writes blank |
+| 5 | **VIN** | CGI scraper (`GlassResults.txt`) | 4 | `N/A` if scraper miss |
+| 6 | **Make** | CGI scraper `Desc` column | 4 | Populated by Phase 4 merge |
+| 7 | **Location** | Email Type column suffix | 2 | `0420APO` -> APO, `0420BB` -> BB |
+| 8 | **Action** | Suffix `r` -> Repair | 2 | Default: `Replacement`; mapped to vendor labels on write |
+| 9 | **Area** | MVA area suffix map | 2 | Example: `WS` -> Windshield |
+| 10 | **Claim#** | Suffix `c` -> Listed | 2 | Default: `Missing` |
+| 11 | **WorkItem** | Runtime config | 2 | Defaults to `verified` |
 
 ## Setup
 

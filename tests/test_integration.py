@@ -311,6 +311,91 @@ class TestIT4_SpreadsheetPersistence:
         assert len(new_rows) == 1
         ws.insert_rows.assert_called_once()
 
+    @patch("GlassOrchestrator._get_worksheet")
+    def test_original_date_carried_forward_from_sheet(self, mock_get_ws):
+        """When an MVA already has a row in the sheet, new row inherits the earliest Original Date."""
+        existing = [["03/05/2026", "03/04/2026", "59340120", "", "1HGCM82633A004352",
+                     "Windshield", "APO", "Replace(AGN)", "Windshield", "Missing", "verified"]]
+        ws = self._mock_worksheet(existing)
+        mock_get_ws.return_value = ws
+
+        # New row 2 days after existing Inventory Date (within 3-day window)
+        df = self._make_test_df(["59340120"], date="03/07/2026")
+        persist_new_rows(df)
+
+        written = ws.insert_rows.call_args[0][0]
+        inventory_col = COLUMNS.index("Inventory Date")
+        original_col = COLUMNS.index("Original Date")
+        assert written[0][inventory_col] == "03/07/2026"        # current date
+        assert written[0][original_col] == "03/04/2026"         # earliest prior Original Date
+
+    @patch("GlassOrchestrator._get_worksheet")
+    def test_original_date_uses_earliest_when_multiple_prior_rows(self, mock_get_ws):
+        """Earliest Original Date is used when the sheet has multiple rows for the same MVA."""
+        existing = [
+            ["03/06/2026", "03/04/2026", "59340120", "", "1HGCM82633A004352",
+             "Windshield", "APO", "Replace(AGN)", "Windshield", "Missing", "verified"],
+            ["03/05/2026", "03/03/2026", "59340120", "", "1HGCM82633A004352",
+             "Windshield", "APO", "Replace(AGN)", "Windshield", "Missing", "verified"],
+        ]
+        ws = self._mock_worksheet(existing)
+        mock_get_ws.return_value = ws
+
+        # New row 2-3 days after existing rows — both within the window
+        df = self._make_test_df(["59340120"], date="03/08/2026")
+        persist_new_rows(df)
+
+        written = ws.insert_rows.call_args[0][0]
+        original_col = COLUMNS.index("Original Date")
+        assert written[0][original_col] == "03/03/2026"         # earliest of 03/03 and 03/04
+
+    @patch("GlassOrchestrator._get_worksheet")
+    def test_original_date_unchanged_for_first_arrival(self, mock_get_ws):
+        """When the MVA has no prior rows in the sheet, Original Date stays as Inventory Date."""
+        ws = self._mock_worksheet()         # empty sheet
+        mock_get_ws.return_value = ws
+
+        df = self._make_test_df(["59999999"], date="03/07/2026")
+        persist_new_rows(df)
+
+        written = ws.insert_rows.call_args[0][0]
+        inventory_col = COLUMNS.index("Inventory Date")
+        original_col = COLUMNS.index("Original Date")
+        assert written[0][inventory_col] == "03/07/2026"
+        assert written[0][original_col] == "03/07/2026"         # first arrival — no prior date
+
+    @patch("GlassOrchestrator._get_worksheet")
+    def test_original_date_outside_window_not_carried_forward(self, mock_get_ws):
+        """Prior rows outside the incident window (>3 days) are ignored for Original Date lookup."""
+        existing = [["03/01/2026", "02/28/2026", "59340120", "", "1HGCM82633A004352",
+                     "Windshield", "APO", "Replace(AGN)", "Windshield", "Missing", "verified"]]
+        ws = self._mock_worksheet(existing)
+        mock_get_ws.return_value = ws
+
+        # New row 6 days after existing Inventory Date — outside the 3-day window
+        df = self._make_test_df(["59340120"], date="03/07/2026")
+        persist_new_rows(df)
+
+        written = ws.insert_rows.call_args[0][0]
+        original_col = COLUMNS.index("Original Date")
+        assert written[0][original_col] == "03/07/2026"         # not carried forward
+
+    @patch("GlassOrchestrator._get_worksheet")
+    def test_original_date_legacy_blank_falls_back_to_inventory_date(self, mock_get_ws):
+        """Legacy rows with blank Original Date should contribute their Inventory Date."""
+        existing = [["03/06/2026", "", "59340120", "", "1HGCM82633A004352",
+                     "Windshield", "APO", "Replace(AGN)", "Windshield", "Missing", "verified"]]
+        ws = self._mock_worksheet(existing)
+        mock_get_ws.return_value = ws
+
+        # Within the 3-day incident window; blank Original Date should resolve to 03/06/2026.
+        df = self._make_test_df(["59340120"], date="03/07/2026")
+        persist_new_rows(df)
+
+        written = ws.insert_rows.call_args[0][0]
+        original_col = COLUMNS.index("Original Date")
+        assert written[0][original_col] == "03/06/2026"
+
 
 # ─── IT-5: Spreadsheet Configuration Health ──────────────────────────────────
 
