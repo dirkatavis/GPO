@@ -60,15 +60,19 @@ class LoginPage:
             (By.XPATH, f"//*[contains(normalize-space(.), '{self.compass_app_label}') and (@role='button' or self::a or self::button)]"),
         ]
 
-        original_handles = set(self.driver.window_handles)
+        can_switch_tabs = hasattr(self.driver, "window_handles") and hasattr(self.driver, "switch_to")
+        original_handles = set(self.driver.window_handles) if can_switch_tabs else set()
         for locator in selectors:
             if click_element(self.driver, locator, timeout=timeout, desc="Compass Mobile tile"):
                 # Compass may open in a new tab; switch if that happens.
                 time.sleep(1)
-                new_handles = [h for h in self.driver.window_handles if h not in original_handles]
-                if new_handles:
-                    self.driver.switch_to.window(new_handles[-1])
-                    log.info("[LOGIN] Switched to Compass Mobile tab")
+                if can_switch_tabs:
+                    new_handles = [h for h in self.driver.window_handles if h not in original_handles]
+                    if new_handles:
+                        self.driver.switch_to.window(new_handles[-1])
+                        log.info("[LOGIN] Switched to Compass Mobile tab")
+                else:
+                    log.debug("[LOGIN] Driver has no Selenium-style tab API; continuing without explicit tab switch")
                 return True
 
         return False

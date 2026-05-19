@@ -1,9 +1,9 @@
-from selenium.webdriver.remote.webdriver import WebDriver
+from core.playwright_adapter import PlaywrightUiDriver
 from utils.logger import log
 from pages.login_page import LoginPage
 
 class LoginFlow:
-    def __init__(self, driver: WebDriver):
+    def __init__(self, driver: PlaywrightUiDriver):
         self.driver = driver
         self.login_page = LoginPage(driver)
 

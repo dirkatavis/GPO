@@ -2,7 +2,6 @@
 import time
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import NoSuchElementException
 from selenium.webdriver.common.by import By
 from flows.complaints_flows import associate_existing_complaint
 from flows.finalize_flow import finalize_workitem
@@ -33,7 +32,7 @@ def get_work_items(driver, mva: str):
         for t in tiles:
             log.debug(f"[DBG] {mva} - tile text = {t.text!r}")
         return tiles
-    except NoSuchElementException as e:
+    except Exception as e:
         log.warning(f"[WORKITEM][WARN] {mva} - could not collect work items -> {e}")
         return []
 
@@ -56,7 +55,7 @@ def create_new_workitem(driver, mva: str):
         log.info(f"[WORKITEM] {mva} - Add Work Item clicked")
         time.sleep(5)
 
-    except NoSuchElementException:
+    except Exception as e:
         log.warning(f"[WORKITEM][WARN] {mva} - add_btn failed -> {e}")
         return {"status": "failed", "reason": "add_btn", "mva": mva}
 
@@ -75,7 +74,7 @@ def create_new_workitem(driver, mva: str):
             if res["status"] != "created":
                 log.error(f"[GLASS][ERROR] {mva} - failed to create glass complaint: {res}")
                 return res
-    except NoSuchElementException as e:
+    except Exception as e:
         log.warning(f"[WORKITEM][WARN] {mva} - complaint handling failed -> {e}")
         return {"status": "failed", "reason": "complaint_handling", "mva": mva}
 
@@ -142,11 +141,8 @@ def get_lighthouse_status(driver, mva: str) -> str | None:
         status = status_el.text.strip()
         log.info(f"[LIGHTHOUSE] {mva} - found status: {status}")
         return status
-    except NoSuchElementException:
-        log.info(f"[LIGHTHOUSE] {mva} - status field not found")
-        return None
     except Exception as e:
-        log.error(f"[LIGHTHOUSE] {mva} - error getting status: {e}")
+        log.info(f"[LIGHTHOUSE] {mva} - status field not found or unreadable: {e}")
         return None
 
 

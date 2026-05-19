@@ -8,7 +8,7 @@ import os
 import sys
 import gspread
 
-from core.driver_manager import create_driver, quit_driver
+from core.playwright_driver_manager import create_driver, quit_driver
 from config.config_loader import get_config
 from flows.LoginFlow import LoginFlow
 from flows.glass_work_item_phase import read_glass_claims, run_glass_work_item_phase, GlassClaimsUpdater

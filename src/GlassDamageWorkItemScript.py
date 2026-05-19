@@ -4,7 +4,7 @@ import os
 import time
 import csv
 from utils.logger import log
-from core.driver_manager import create_driver, quit_driver
+from core.playwright_driver_manager import create_driver, quit_driver
 from config.config_loader import get_config
 from flows.LoginFlow import LoginFlow
 from flows.work_item_flow import get_work_items
@@ -15,11 +15,9 @@ from core.complaint_types import ComplaintType, GlassDamageType
 from pages.work_item import WorkItem
 from pages.mva_input_page import MVAInputPage
 from utils.ui_helpers import click_element, navigate_back_to_home
-from selenium.common.exceptions import NoSuchElementException, TimeoutException
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
-import selenium.webdriver.common.keys as Keys
 
 # Ensure project root is in sys.path for imports
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -161,7 +159,7 @@ def find_mva_input_field(mva_input_page, mva, attempt, max_attempts):
                     (f := mva_input_page.find_input()) and f.is_enabled() and f.is_displayed() and f
                 )
             )
-        except TimeoutException:
+        except Exception:
             input_field = None
     
     if not input_field:
@@ -185,8 +183,8 @@ def clear_and_enter_mva(input_field, mva):
     try:
         # Clear the field using multiple methods for robustness
         for _ in range(3):
-            input_field.send_keys(Keys.Keys.CONTROL + 'a')
-            input_field.send_keys(Keys.Keys.DELETE)
+            input_field.send_keys("\ue009a")
+            input_field.send_keys("\ue017")
             input_field.clear()
             time.sleep(0.2)
         
@@ -420,7 +418,7 @@ def main():
                         EC.presence_of_element_located((By.CSS_SELECTOR, "[class*='fleet-operations-pwa__vehicle-properties-container']"))
                     )
                     log.info(f"[MVA_VALIDATION] Vehicle properties loaded successfully for {mva}")
-                except TimeoutException:
+                except Exception:
                     log.warning(f"[MVA_VALIDATION] Vehicle properties not found for {mva} - MVA may be invalid or non-existent")
                     break  # Skip to next MVA
 
@@ -432,7 +430,7 @@ def main():
                         lambda d: len(d.find_elements(By.CSS_SELECTOR, ".work-item, [class*='work-item'], [class*='workitem']")) > 0
                     )
                     log.info(f"[MVA_VALIDATION] Work items loaded successfully for {mva}")
-                except TimeoutException:
+                except Exception:
                     log.info(f"[MVA_VALIDATION] No work items found after 3 seconds for {mva} - assuming none exist")
                 
                 # Brief pause to ensure UI is stable after work item detection
