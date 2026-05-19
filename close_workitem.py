@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 from utils.logger import log
 
+from config.config_loader import get_config
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from playwright.async_api import async_playwright
 from playwright_prototype.config import (
@@ -37,6 +38,17 @@ RESULT_ERROR = "error"
 RESULT_TIMEOUT = "timeout"
 
 _GLASS_PATTERN = re.compile(r"glass|windshield|crack|chip|window", re.I)
+_PM_PATTERN = re.compile(r"PM", re.I)
+
+COMPLAINT_TYPE_PATTERNS = {
+    "Glass": _GLASS_PATTERN,
+    "PM": _PM_PATTERN,
+}
+
+
+def _get_valid_complaint_types() -> list[str]:
+    """Load valid complaint types from config."""
+    return get_config("valid_complaint_types", ["Glass", "PM"])
 
 
 def _validate_post_navigation_url(url: str, mva: str) -> None:
@@ -63,16 +75,41 @@ def _load_csv(path: str) -> list[dict]:
         return [row for row in reader if row.get("mva", "").strip()]
 
 
-def _build_targets(args: argparse.Namespace) -> list[str]:
+def _build_targets(args: argparse.Namespace) -> list[dict]:
+    """Build list of (mva, complaint_type) targets from CLI args.
+    
+    Returns list of dicts with 'mva' and 'complaint_type' keys.
+    """
     if args.csv_path:
         rows = _load_csv(args.csv_path)
-        targets = [r["mva"].strip() for r in rows]
+        targets = []
+        valid_types = _get_valid_complaint_types()
+        
+        for i, row in enumerate(rows, start=2):
+            mva = row.get("mva", "").strip()
+            if not mva:
+                log.warning("[CLOSE] Row %d: empty MVA, skipping", i)
+                continue
+            
+            complaint_type = row.get("Type", "").strip()
+            if not complaint_type:
+                log.error("[CLOSE] Row %d: missing 'Type' column for MVA %s", i, mva)
+                sys.exit(1)
+            
+            if complaint_type not in valid_types:
+                log.error("[CLOSE] Row %d: invalid Type '%s' for MVA %s — must be one of: %s",
+                         i, complaint_type, mva, ", ".join(valid_types))
+                sys.exit(1)
+            
+            targets.append({"mva": mva, "complaint_type": complaint_type})
+        
         if not targets:
             log.error("[CLOSE] No valid MVAs found in %s", args.csv_path)
             sys.exit(1)
         log.info("[CLOSE] Loaded %d MVA(s) from %s", len(targets), args.csv_path)
         return targets
-    return [args.mva.strip()]
+    
+    return [{"mva": args.mva.strip(), "complaint_type": args.complaint_type or "Glass"}]
 
 
 async def _capture_playwright_screenshot(page: "Page", label: str, mva: str) -> None:
@@ -87,13 +124,15 @@ async def _capture_playwright_screenshot(page: "Page", label: str, mva: str) -> 
         log.warning("[CLOSE] Could not capture screenshot: %s", e)
 
 
-async def _playwright_close_work_item(page: "Page", mva: str) -> tuple[str, str]:
-    """Find the open glass work item tile, expand it, and mark it complete.
+async def _playwright_close_work_item(page: "Page", mva: str, complaint_type: str) -> tuple[str, str]:
+    """Find the open work item tile of the specified type, expand it, and mark it complete.
 
     Returns (result_constant, tile_detail_text).
     """
+    pattern = COMPLAINT_TYPE_PATTERNS.get(complaint_type, _GLASS_PATTERN)
+    
     tiles = page.locator("div[class*='fleet-operations-pwa__scan-record__']").filter(
-        has_text=_GLASS_PATTERN
+        has_text=pattern
     ).filter(
         has_text=re.compile(r"open", re.I)
     )
@@ -111,8 +150,13 @@ async def _playwright_close_work_item(page: "Page", mva: str) -> tuple[str, str]
     return RESULT_CLOSED, detail
 
 
-async def _run_playwright_close_async(args: argparse.Namespace, targets: list[str]) -> list[dict]:
-    """Playwright close backend."""
+async def _run_playwright_close_async(args: argparse.Namespace, targets: list[dict]) -> list[dict]:
+    """Playwright close backend.
+    
+    Args:
+        args: argparse.Namespace with timeout_seconds
+        targets: list of dicts with 'mva' and 'complaint_type' keys
+    """
     results: list[dict] = []
     headless = resolve_headless()
     edge_user_data_dir = resolve_edge_user_data_dir()
@@ -154,8 +198,11 @@ async def _run_playwright_close_async(args: argparse.Namespace, targets: list[st
 
             await asyncio.wait_for(pw_warmup_compass(page), timeout=args.timeout_seconds)
 
-            for mva in targets:
-                log.info("[CLOSE] Settling UI before closing MVA %s (polling every 1s, 10s timeout)...", mva)
+            for target in targets:
+                mva = target["mva"]
+                complaint_type = target["complaint_type"]
+                
+                log.info("[CLOSE] Settling UI before closing MVA %s (Type: %s, polling every 1s, 10s timeout)...", mva, complaint_type)
                 settle_start = time.monotonic()
                 settle_timeout = 10.0
                 while (time.monotonic() - settle_start) < settle_timeout:
@@ -175,7 +222,7 @@ async def _run_playwright_close_async(args: argparse.Namespace, targets: list[st
                 if step_delay_ms > 0:
                     await page.wait_for_timeout(step_delay_ms)
 
-                log.info("[CLOSE] Closing open glass work item for MVA %s...", mva)
+                log.info("[CLOSE] Closing open %s work item for MVA %s...", complaint_type, mva)
                 started = time.monotonic()
 
                 try:
@@ -202,15 +249,15 @@ async def _run_playwright_close_async(args: argparse.Namespace, targets: list[st
 
                 try:
                     result, detail = await asyncio.wait_for(
-                        _playwright_close_work_item(page, mva), timeout=remaining
+                        _playwright_close_work_item(page, mva, complaint_type), timeout=remaining
                     )
                     if result == RESULT_CLOSED:
-                        log.info("[CLOSE] %s - CLOSED: glass work item marked complete", mva)
+                        log.info("[CLOSE] %s - CLOSED: %s work item marked complete", mva, complaint_type)
                         if detail:
                             log.info("[CLOSE] %s -   detail: %s", mva, detail)
                         await _capture_playwright_screenshot(page, "closed", mva)
                     elif result == RESULT_NOT_FOUND:
-                        log.warning("[CLOSE] %s - NOT FOUND: no open glass work item to close", mva)
+                        log.warning("[CLOSE] %s - NOT FOUND: no open %s work item to close", mva, complaint_type)
                         await _capture_playwright_screenshot(page, "not_found", mva)
                     results.append({"mva": mva, "result": result, "detail": detail})
                 except asyncio.TimeoutError:
@@ -228,7 +275,7 @@ async def _run_playwright_close_async(args: argparse.Namespace, targets: list[st
     return results
 
 
-def _run_playwright_close(args: argparse.Namespace, targets: list[str], should_pause: bool) -> list[dict]:
+def _run_playwright_close(args: argparse.Namespace, targets: list[dict], should_pause: bool) -> list[dict]:
     results = asyncio.run(_run_playwright_close_async(args, targets))
     if should_pause:
         try:
@@ -266,7 +313,8 @@ def main() -> None:
         description="Close open glass work items for one or more MVAs."
     )
     parser.add_argument("mva", nargs="?", default=None, help="Single target MVA (omit when using --csv)")
-    parser.add_argument("--csv", dest="csv_path", default=None, help="Path to CSV file with 'mva' column")
+    parser.add_argument("--csv", dest="csv_path", default=None, help="Path to CSV file with 'mva' and 'Type' columns")
+    parser.add_argument("--type", dest="complaint_type", default=None, help="Complaint type for single MVA (e.g., Glass, PM) — optional, defaults to Glass")
     parser.add_argument("--no-pause", action="store_true", help="Deprecated: no-op kept for backward compatibility")
     parser.add_argument("--pause", action="store_true", help="Prompt for Enter before closing the browser (opt-in)")
     parser.add_argument("--timeout-seconds", type=int, default=90, help="Per-MVA timeout in seconds (default: 90)")

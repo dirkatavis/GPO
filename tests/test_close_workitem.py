@@ -23,31 +23,43 @@ import close_workitem as cw
 # ─── Unit tests ──────────────────────────────────────────────────────────────
 
 class TestBuildTargets:
-    def _args(self, mva=None, csv_path=None):
+    def _args(self, mva=None, csv_path=None, complaint_type=None):
         ns = argparse.Namespace()
         ns.mva = mva
         ns.csv_path = csv_path
+        ns.complaint_type = complaint_type
         return ns
 
     def test_single_mva(self):
         targets = cw._build_targets(self._args(mva="12345678"))
-        assert targets == ["12345678"]
+        assert targets == [{"mva": "12345678", "complaint_type": "Glass"}]
 
     def test_single_mva_strips_whitespace(self):
         targets = cw._build_targets(self._args(mva="  99887766  "))
-        assert targets == ["99887766"]
+        assert targets == [{"mva": "99887766", "complaint_type": "Glass"}]
+
+    def test_single_mva_with_explicit_type(self):
+        targets = cw._build_targets(self._args(mva="12345678", complaint_type="PM"))
+        assert targets == [{"mva": "12345678", "complaint_type": "PM"}]
 
     def test_csv_produces_mva_list(self, tmp_path):
         csv_file = tmp_path / "mvas.csv"
-        csv_file.write_text("mva\n11111111\n22222222\n33333333\n")
+        csv_file.write_text("mva,Type\n11111111,Glass\n22222222,PM\n33333333,Glass\n")
         targets = cw._build_targets(self._args(csv_path=str(csv_file)))
-        assert targets == ["11111111", "22222222", "33333333"]
+        assert targets == [
+            {"mva": "11111111", "complaint_type": "Glass"},
+            {"mva": "22222222", "complaint_type": "PM"},
+            {"mva": "33333333", "complaint_type": "Glass"},
+        ]
 
     def test_csv_skips_blank_mva_rows(self, tmp_path):
         csv_file = tmp_path / "mvas.csv"
-        csv_file.write_text("mva\n11111111\n\n22222222\n")
+        csv_file.write_text("mva,Type\n11111111,Glass\n\n22222222,Glass\n")
         targets = cw._build_targets(self._args(csv_path=str(csv_file)))
-        assert targets == ["11111111", "22222222"]
+        assert targets == [
+            {"mva": "11111111", "complaint_type": "Glass"},
+            {"mva": "22222222", "complaint_type": "Glass"},
+        ]
 
 
 class TestLogSummary:
@@ -183,7 +195,7 @@ class TestRunPlaywrightCloseAsync:
         monkeypatch.setattr("close_workitem.pw_navigate_to_mva", AsyncMock(side_effect=_navigate_side_effect))
 
         caplog.set_level("INFO")
-        asyncio.run(cw._run_playwright_close_async(self._args(), ["12345678"]))
+        asyncio.run(cw._run_playwright_close_async(self._args(), [{"mva": "12345678", "complaint_type": "Glass"}]))
 
         assert "[CLOSE] 12345678 - navigating to MVA" in caplog.text
         assert "[CLOSE] 12345678 - navigation landed at URL:" in caplog.text
@@ -194,7 +206,7 @@ class TestRunPlaywrightCloseAsync:
 
         monkeypatch.setattr("close_workitem.pw_navigate_to_mva", AsyncMock(side_effect=asyncio.TimeoutError()))
 
-        results = asyncio.run(cw._run_playwright_close_async(self._args(), ["12345678"]))
+        results = asyncio.run(cw._run_playwright_close_async(self._args(), [{"mva": "12345678", "complaint_type": "Glass"}]))
 
         assert results == [{"mva": "12345678", "result": cw.RESULT_TIMEOUT, "detail": ""}]
 
@@ -204,7 +216,7 @@ class TestRunPlaywrightCloseAsync:
 
         monkeypatch.setattr("close_workitem.pw_navigate_to_mva", AsyncMock(side_effect=RuntimeError("bad route")))
 
-        results = asyncio.run(cw._run_playwright_close_async(self._args(), ["12345678"]))
+        results = asyncio.run(cw._run_playwright_close_async(self._args(), [{"mva": "12345678", "complaint_type": "Glass"}]))
 
         assert results == [{"mva": "12345678", "result": cw.RESULT_NAV_FAILED, "detail": ""}]
 
@@ -229,7 +241,7 @@ class TestRunPlaywrightCloseAsync:
         monkeypatch.setattr("close_workitem.pw_warmup_compass", AsyncMock(side_effect=_warmup))
         monkeypatch.setattr("close_workitem.pw_navigate_to_mva", AsyncMock(side_effect=_navigate))
 
-        asyncio.run(cw._run_playwright_close_async(self._args(), ["12345678"]))
+        asyncio.run(cw._run_playwright_close_async(self._args(), [{"mva": "12345678", "complaint_type": "Glass"}]))
 
         assert call_order[:3] == ["ensure", "warmup", "navigate"]
 
@@ -252,12 +264,13 @@ def test_smoke_close_single_mva():
     args = argparse.Namespace()
     args.mva = mva
     args.csv_path = None
+    args.complaint_type = "Glass"
     args.timeout_seconds = 120
     args.pause = False
 
     import asyncio
 
-    results = asyncio.run(cw._run_playwright_close_async(args, [mva]))
+    results = asyncio.run(cw._run_playwright_close_async(args, [{"mva": mva, "complaint_type": "Glass"}]))
     assert len(results) == 1
     assert results[0]["result"] == cw.RESULT_CLOSED, (
         f"Expected RESULT_CLOSED, got {results[0]['result']!r}: {results[0].get('detail')}"

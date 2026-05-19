@@ -31,6 +31,9 @@
 	"mva_entry_delay_seconds_comment": "Wait time (seconds) when entering MVA codes. Increase if OCR or data entry is slow.",
 	"mva_entry_delay_seconds": 30,
 	
+	"valid_complaint_types_comment": "Supported complaint/work item types for close operations. Add new types as they become available (e.g. 'Dent', 'Accident Repair'). Must match exactly in CSV Type column.",
+	"valid_complaint_types": ["Glass", "PM"],
+	
 	"logging_comment": "Logging configuration. level: DEBUG (verbose), INFO (normal), ERROR (errors only). format: log message template.",
 	"logging": {
 		"level": "DEBUG",
