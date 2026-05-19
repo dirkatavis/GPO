@@ -18,7 +18,7 @@ class LoginPage:
         self.wwid_entry_timeout_seconds = int(get_config("wwid_entry_timeout_seconds", 25))
         self.login_url = get_config(
             "login_url",
-            "https://avisbudget.palantirfoundry.com/multipass/login",
+            "https://avisbudget.palantirfoundry.com/workspace/fleet-operations-pwa/health",
         )
         self.compass_app_label = get_config("compass_app_label", "Compass Mobile")
 

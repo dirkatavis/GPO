@@ -58,7 +58,7 @@ Run this command from the repository root to verify two things:
 - The login URL is reachable.
 
 ```bash
-py -3 -c "from config.config_loader import get_config; import urllib.request; url=get_config('login_url','https://avisbudget.palantirfoundry.com/multipass/login'); print('Loaded login_url:', url); response=urllib.request.urlopen(url, timeout=10); print('Connected. HTTP status:', response.status)"
+py -3 -c "from config.config_loader import get_config; import urllib.request; url=get_config('login_url','https://avisbudget.palantirfoundry.com/workspace/fleet-operations-pwa/health'); print('Loaded login_url:', url); response=urllib.request.urlopen(url, timeout=10); print('Connected. HTTP status:', response.status)"
 ```
 
 Expected result:

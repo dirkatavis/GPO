@@ -89,12 +89,7 @@ if not exist "%CSV_PATH%" (
 
 echo Creating glass work items from: %CSV_PATH%
 
-echo [PRE-LAUNCH] Terminating any running Edge instances...
-taskkill /F /IM msedge.exe /T 2>nul
-timeout /t 2 /nobreak >nul
-
 set "GLASS_AGENTIC=1"
-set "GLASS_EDGE_NO_PROFILE=1"
 "%VENV_PY%" create_workitem.py --csv "%CSV_PATH%" --backend playwright
 
 echo.

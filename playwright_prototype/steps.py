@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import re
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from config.config_loader import get_config
@@ -99,19 +98,25 @@ async def navigate_to_mva(page: Page, mva: str) -> None:
     try:
         vehicle_url_template = str(get_config("compass_vehicle_url_template", "")).strip()
         if vehicle_url_template:
+            log.info("[STEPS] %s — vehicle URL template configured: %s", mva, vehicle_url_template)
             try:
                 expected_vehicle_url = vehicle_url_template.format(mva=mva)
+                log.info("[STEPS] %s — resolved vehicle URL: %s", mva, expected_vehicle_url)
                 if page.url != expected_vehicle_url:
                     log.info("[STEPS] %s — opening vehicle URL directly", mva)
                     await page.goto(expected_vehicle_url, wait_until="domcontentloaded")
                 else:
                     log.info("[STEPS] %s — already on vehicle URL", mva)
             except Exception as exc:
-                log.warning(
-                    "[STEPS] %s — invalid compass_vehicle_url_template, falling back to MVA entry (%s)",
-                    mva,
-                    exc,
-                )
+                raise RuntimeError(
+                    f"[STEPS] {mva} — invalid compass_vehicle_url_template: {exc}"
+                ) from exc
+        else:
+            log.info(
+                "[STEPS] %s — no compass_vehicle_url_template configured; using MVA entry on current page: %s",
+                mva,
+                page.url,
+            )
 
         await _enter_mva(page, mva)
         await page.locator("button:not([disabled])").filter(
