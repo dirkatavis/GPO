@@ -121,8 +121,7 @@ Comment lines (`#`) skipped by both scripts.
 
 4. **Rename `select_glass_opcode` → `select_opcode(page, type)`**
    - `Glass`: selects "Glass Repair/Replace" (unchanged)
-   - `PM`: reads `pm_opcode` from config; selects it if set; skips the step if unset.
-     If the app requires an opcode, Create Work Item button will be disabled → timeout → clear error.
+   - `PM`: selects "PM Gas" (from `pm_opcode` config, default `"PM Gas"`); skips the step if config is null.
 
 ### `WorkItems/create_workitem.py`
 
@@ -145,7 +144,7 @@ Comment lines (`#`) skipped by both scripts.
 
 | Key | Type | Default | Purpose |
 |---|---|---|---|
-| `pm_opcode` | string or null | `null` | Opcode name for PM work items. If null, opcode step is skipped. |
+| `pm_opcode` | string or null | `"PM Gas"` | Opcode name for PM work items. If null, opcode step is skipped. |
 
 ---
 
@@ -168,7 +167,6 @@ All PM-specific steps log at INFO with `[STEPS] PM:` prefix for easy trace readi
 
 | Question | Signal |
 |---|---|
-| Does PM require an opcode? | Create Work Item button disabled after mileage → add opcode name to `pm_opcode` config |
 | Does Additional Info checkbox need explicit unchecking? | Observe default state on first `--pause` run |
 
 ---
