@@ -167,8 +167,8 @@ async def _playwright_close_work_item(page: "Page", mva: str, complaint_type: st
                 log.warning("[CLOSE] %s - Type mismatch: expected %s but complaints says: %s", mva, complaint_type, actual_complaint)
                 return RESULT_NOT_FOUND, ""
 
-    await open_glass_work_item_tile(page, mva)
-    await complete_glass_work_item(page, mva)
+    await open_glass_work_item_tile(page, mva, complaint_type)
+    await complete_glass_work_item(page, mva, type=complaint_type)
 
     return RESULT_CLOSED, detail
 

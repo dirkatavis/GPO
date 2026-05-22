@@ -506,14 +506,15 @@ async def confirm_completion(page: Page) -> None:
 
 # ─── Close / Resolve Work Item ────────────────────────────────────────────────
 
-async def open_glass_work_item_tile(page: Page, mva: str) -> None:
-    """Click the 'Open' title bar on the glass work item tile to expand the detail card."""
-    log.info("[STEPS] %s — opening glass work item tile", mva)
+async def open_glass_work_item_tile(page: Page, mva: str, type: str = "Glass") -> None:
+    """Click the 'Open' title bar on the matching work item tile to expand the detail card."""
+    log.info("[STEPS] %s — opening %s work item tile", mva, type)
+    pattern = COMPLAINT_TYPE_PATTERNS.get(type, _GLASS_PATTERN)
     try:
         tile = page.locator(
             "div[class*='fleet-operations-pwa__scan-record__']"
         ).filter(
-            has_text=re.compile(r"glass|windshield|crack|chip|window", re.I)
+            has_text=pattern
         ).filter(
             has_text=re.compile(r"open", re.I)
         ).first
@@ -524,17 +525,18 @@ async def open_glass_work_item_tile(page: Page, mva: str) -> None:
         await page.get_by_role("button", name="Mark Complete").wait_for(
             state="visible", timeout=15_000
         )
-        log.info("[STEPS] %s — glass work item tile opened", mva)
+        log.info("[STEPS] %s — %s work item tile opened", mva, type)
     except Exception as exc:
         raise RuntimeError(f"[STEPS] open_glass_work_item_tile failed for {mva}: {exc}") from exc
 
 
-async def complete_glass_work_item(page: Page, mva: str, note: str = "Done") -> None:
+async def complete_glass_work_item(page: Page, mva: str, note: str = "Done", type: str = "Glass") -> None:
     """Click 'Mark Complete', fill 'Enter Correction', click 'Complete Work Item'.
 
     Verifies success by waiting for the tile status to change from 'Open' to 'Complete'.
     """
-    log.info("[STEPS] %s — marking glass work item complete", mva)
+    log.info("[STEPS] %s — marking %s work item complete", mva, type)
+    pattern = COMPLAINT_TYPE_PATTERNS.get(type, _GLASS_PATTERN)
     try:
         await page.wait_for_timeout(BUTTON_PUSH_DELAY_MS)
         await page.get_by_role("button", name="Mark Complete").click(timeout=10_000)
@@ -554,11 +556,11 @@ async def complete_glass_work_item(page: Page, mva: str, note: str = "Done") -> 
         await page.locator(
             "div[class*='fleet-operations-pwa__scan-record__']"
         ).filter(
-            has_text=re.compile(r"glass|windshield|crack|chip|window", re.I)
+            has_text=pattern
         ).filter(
             has_text=re.compile(r"complete", re.I)
         ).first.wait_for(state="visible", timeout=20_000)
 
-        log.info("[STEPS] %s — glass work item marked complete", mva)
+        log.info("[STEPS] %s — %s work item marked complete", mva, type)
     except Exception as exc:
         raise RuntimeError(f"[STEPS] complete_glass_work_item failed for {mva}: {exc}") from exc
