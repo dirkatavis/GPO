@@ -6,6 +6,14 @@ from typing import TYPE_CHECKING
 
 from config.config_loader import get_config
 
+_GLASS_PATTERN = re.compile(r"glass|windshield|crack|chip|window", re.I)
+_PM_PATTERN = re.compile(r"PM", re.I)
+
+COMPLAINT_TYPE_PATTERNS: dict[str, re.Pattern] = {
+    "Glass": _GLASS_PATTERN,
+    "PM":    _PM_PATTERN,
+}
+
 if TYPE_CHECKING:
     from playwright.async_api import Page
 
@@ -130,47 +138,39 @@ async def navigate_to_mva(page: Page, mva: str) -> None:
 # ─── Work Item Flow ───────────────────────────────────────────────────────────
 
 class ExistingWorkItemError(Exception):
-    """Raised when an open glass work item already exists for an MVA."""
+    """Raised when an open work item of the requested type already exists for an MVA."""
 
 
-async def check_existing_glass_work_item(page: Page, mva: str) -> None:
-    """Raise ExistingWorkItemError if an open glass work item already exists.
+async def check_existing_work_item(page: Page, mva: str, type: str) -> None:
+    """Raise ExistingWorkItemError if an open work item of the given type already exists.
 
-    Inspects the work items list on the vehicle page. If any open tile
-    contains a glass-related keyword the run is aborted for this MVA — no
-    duplicate work items should be created.
+    Uses COMPLAINT_TYPE_PATTERNS[type] to match tiles. Inspects work items on the
+    vehicle page — aborts for this MVA if a matching open tile is found.
     """
-    log.info("[STEPS] %s — checking for existing open glass work item", mva)
+    pattern = COMPLAINT_TYPE_PATTERNS.get(type, _GLASS_PATTERN)
+    log.info("[STEPS] %s — checking for existing open %s work item", mva, type)
     try:
-        # Wait briefly for work items container to settle
         container = page.locator('[class*="fleet-operations-pwa__scan-record__"]').first
         try:
             await container.wait_for(state="visible", timeout=8_000)
         except Exception:
-            # No work items at all — safe to proceed
             log.info("[STEPS] %s — no work items container found, safe to proceed", mva)
             return
 
-        # Look for open tiles with glass-related text
-        open_glass = page.locator(
+        open_item = page.locator(
             '[class*="fleet-operations-pwa__scan-record__"]'
-        ).filter(
-            has_text=re.compile(r"glass|windshield|crack|chip|window", re.I)
-        ).filter(
-            has_text=re.compile(r"open", re.I)
-        )
-        count = await open_glass.count()
+        ).filter(has_text=pattern).filter(has_text=re.compile(r"open", re.I))
+        count = await open_item.count()
         if count > 0:
-            tile_text = await open_glass.first.inner_text()
+            tile_text = await open_item.first.inner_text()
             raise ExistingWorkItemError(
-                f"{mva} — open glass work item already exists: {tile_text.strip()!r}"
+                f"{mva} — open {type} work item already exists: {tile_text.strip()!r}"
             )
-
-        log.info("[STEPS] %s — no open glass work item found, safe to proceed", mva)
+        log.info("[STEPS] %s — no open %s work item found, safe to proceed", mva, type)
     except ExistingWorkItemError:
         raise
     except Exception as exc:
-        raise RuntimeError(f"[STEPS] check_existing_glass_work_item failed for {mva}: {exc}") from exc
+        raise RuntimeError(f"[STEPS] check_existing_work_item failed for {mva}: {exc}") from exc
 
 
 async def click_add_work_item(page: Page, mva: str) -> None:
@@ -372,28 +372,36 @@ async def complete_mileage_dialog(page: Page, mva: str) -> None:
         raise RuntimeError(f"[STEPS] complete_mileage_dialog failed for {mva}: {exc}") from exc
 
 
-async def select_glass_opcode(page: Page) -> None:
-    """Wait for the OpCode list to render then click 'Glass Repair/Replace'.
+async def select_opcode(page: Page, type: str) -> None:
+    """Select the appropriate opcode for the given work item type.
 
-    Waits for any opCodeText element first (list load), then finds and scrolls
-    to the target tile — mirrors opcode_flows.select_opcode().
+    Glass: selects glass_opcode_primary (default 'Glass Repair/Replace').
+    PM: selects pm_opcode config value (default 'PM Gas'); skips step if pm_opcode is null.
     """
-    log.info("[STEPS] Selecting 'Glass Repair/Replace' OpCode")
+    if type == "PM":
+        pm_opcode = get_config("pm_opcode", None)
+        if pm_opcode is None:
+            log.info("[STEPS] PM: pm_opcode is null — skipping opcode selection")
+            return
+        opcode_label = str(pm_opcode)
+    else:
+        opcode_label = str(get_config("glass_opcode_primary", "Glass Repair/Replace"))
+
+    log.info("[STEPS] Selecting '%s' OpCode", opcode_label)
     try:
         await page.locator('[class*="opCodeText"]').first.wait_for(
             state="visible", timeout=15_000
         )
-        target = page.get_by_text("Glass Repair/Replace", exact=True)
+        target = page.get_by_text(opcode_label, exact=True)
         await target.scroll_into_view_if_needed()
         await page.wait_for_timeout(BUTTON_PUSH_DELAY_MS)
         await target.click(timeout=10_000)
-        # Verify OpCode selection registered — Create Work Item button must appear
         await page.get_by_role("button", name="Create Work Item").wait_for(
             state="visible", timeout=15_000
         )
-        log.info("[STEPS] OpCode selected — 'Create Work Item' button visible")
+        log.info("[STEPS] OpCode '%s' selected — 'Create Work Item' button visible", opcode_label)
     except Exception as exc:
-        raise RuntimeError(f"[STEPS] select_glass_opcode failed: {exc}") from exc
+        raise RuntimeError(f"[STEPS] select_opcode failed for type={type}: {exc}") from exc
 
 
 async def create_work_item(page: Page) -> None:

@@ -212,3 +212,33 @@ class TestHandleComplaintDialogNewPathDamageType:
         assert damage_selectors, (
             f"Expected XPath selector containing 'Windshield Chip' but got: {locator_calls}"
         )
+
+
+class TestComplaintTypePatterns:
+    """COMPLAINT_TYPE_PATTERNS in steps.py matches the correct tile text."""
+
+    def test_glass_pattern_matches_glass(self):
+        from playwright_prototype.steps import COMPLAINT_TYPE_PATTERNS
+        assert COMPLAINT_TYPE_PATTERNS["Glass"].search("Glass Damage")
+
+    def test_glass_pattern_matches_windshield(self):
+        from playwright_prototype.steps import COMPLAINT_TYPE_PATTERNS
+        assert COMPLAINT_TYPE_PATTERNS["Glass"].search("Windshield Crack")
+
+    def test_pm_pattern_matches_pm(self):
+        from playwright_prototype.steps import COMPLAINT_TYPE_PATTERNS
+        assert COMPLAINT_TYPE_PATTERNS["PM"].search("PM Gas")
+
+    def test_glass_pattern_does_not_match_pm(self):
+        from playwright_prototype.steps import COMPLAINT_TYPE_PATTERNS
+        assert not COMPLAINT_TYPE_PATTERNS["Glass"].search("PM preventive maintenance")
+
+    def test_check_existing_work_item_importable(self):
+        """Renamed function must be importable from steps."""
+        from playwright_prototype.steps import check_existing_work_item
+        assert callable(check_existing_work_item)
+
+    def test_select_opcode_importable(self):
+        """Renamed function must be importable from steps."""
+        from playwright_prototype.steps import select_opcode
+        assert callable(select_opcode)
