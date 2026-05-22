@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 import logging
 import re
 from typing import TYPE_CHECKING
@@ -141,14 +142,31 @@ class ExistingWorkItemError(Exception):
     """Raised when an open work item of the requested type already exists for an MVA."""
 
 
-async def check_existing_work_item(page: Page, mva: str, type: str) -> None:
-    """Raise ExistingWorkItemError if an open work item of the given type already exists.
+def _parse_tile_created_at(tile_text: str) -> datetime.date | None:
+    """Extract and parse the Created At date from a work item tile's inner text.
 
-    Uses COMPLAINT_TYPE_PATTERNS[type] to match tiles. Inspects work items on the
-    vehicle page — aborts for this MVA if a matching open tile is found.
+    Returns a date object or None if the field is absent or unparseable.
+    Expected format: 'Created At: M/D/YYYY, H:MM:SS AM/PM'
+    """
+    match = re.search(r"Created At:\s*(\d{1,2}/\d{1,2}/\d{4})", tile_text, re.I)
+    if not match:
+        return None
+    try:
+        return datetime.datetime.strptime(match.group(1), "%m/%d/%Y").date()
+    except ValueError:
+        return None
+
+
+async def check_existing_work_item(page: Page, mva: str, type: str) -> None:
+    """Raise ExistingWorkItemError if a recent open work item of the given type already exists.
+
+    Uses COMPLAINT_TYPE_PATTERNS[type] to match tiles. Only raises if the tile's
+    Created At date is within duplicate_window_days of today (default 5). Tiles older
+    than the window are ignored. If Created At is missing, the tile is treated as recent.
     """
     pattern = COMPLAINT_TYPE_PATTERNS.get(type, _GLASS_PATTERN)
-    log.info("[STEPS] %s — checking for existing open %s work item", mva, type)
+    window_days = int(get_config("duplicate_window_days", 5))
+    log.info("[STEPS] %s — checking for existing open %s work item (window=%d days)", mva, type, window_days)
     try:
         container = page.locator('[class*="fleet-operations-pwa__scan-record__"]').first
         try:
@@ -161,12 +179,22 @@ async def check_existing_work_item(page: Page, mva: str, type: str) -> None:
             '[class*="fleet-operations-pwa__scan-record__"]'
         ).filter(has_text=pattern).filter(has_text=re.compile(r"open", re.I))
         count = await open_item.count()
-        if count > 0:
-            tile_text = await open_item.first.inner_text()
-            raise ExistingWorkItemError(
-                f"{mva} — open {type} work item already exists: {tile_text.strip()!r}"
-            )
-        log.info("[STEPS] %s — no open %s work item found, safe to proceed", mva, type)
+        today = datetime.date.today()
+        for idx in range(count):
+            tile_text = await open_item.nth(idx).inner_text()
+            created_at = _parse_tile_created_at(tile_text)
+            if created_at is None:
+                log.warning("[STEPS] %s — open %s tile has no Created At; treating as recent dup", mva, type)
+                raise ExistingWorkItemError(
+                    f"{mva} — open {type} work item already exists (no date): {tile_text.strip()!r}"
+                )
+            age_days = (today - created_at).days
+            if window_days == 0 or age_days <= window_days:
+                raise ExistingWorkItemError(
+                    f"{mva} — open {type} work item already exists (created {age_days}d ago): {tile_text.strip()!r}"
+                )
+            log.info("[STEPS] %s — open %s tile found but is %d days old (> window %d) — ignoring", mva, type, age_days, window_days)
+        log.info("[STEPS] %s — no recent open %s work item found, safe to proceed", mva, type)
     except ExistingWorkItemError:
         raise
     except Exception as exc:

@@ -36,7 +36,10 @@
 	
 	"valid_complaint_types_comment": "Supported complaint/work item types for close operations. Add new types as they become available (e.g. 'Dent', 'Accident Repair'). Must match exactly in CSV Type column.",
 	"valid_complaint_types": ["Glass", "PM"],
-	
+
+	"duplicate_window_days_comment": "Number of days within which an existing open work item is considered a duplicate. 0 disables the window check (any open item is a dup).",
+	"duplicate_window_days": 5,
+
 	"logging_comment": "Logging configuration. level: DEBUG (verbose), INFO (normal), ERROR (errors only). format: log message template.",
 	"logging": {
 		"level": "DEBUG",
