@@ -13,7 +13,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import csv
+import subprocess
 import sys
+import time
 from pathlib import Path
 
 # Allow imports from repo root (playwright_prototype, utils, config packages)
@@ -52,6 +54,14 @@ from playwright_prototype.steps import (
     select_opcode,
     warmup_compass as pw_warmup_compass,
 )
+
+
+def _is_edge_running() -> bool:
+    result = subprocess.run(
+        ["tasklist", "/FI", "IMAGENAME eq msedge.exe", "/NH"],
+        capture_output=True, text=True,
+    )
+    return "msedge.exe" in result.stdout
 
 
 def _resolve_row_work_item_action(row: dict, default_action: str) -> str:
@@ -163,6 +173,15 @@ async def _run_playwright_creation_async(targets: list[dict]) -> None:
     created_count = 0
     skipped_count = 0
     failed_count = 0
+
+    if _is_edge_running():
+        log.warning("[CREATE] Edge processes detected — killing residual processes before launch...")
+        subprocess.run(["taskkill", "/F", "/IM", "msedge.exe", "/T"], capture_output=True, text=True)
+        time.sleep(2)
+        if _is_edge_running():
+            log.error("[CREATE] Edge is still running after kill attempt. Close all Edge windows and retry.")
+            sys.exit(1)
+        log.info("[CREATE] Edge processes cleared — proceeding with launch.")
 
     async with async_playwright() as pw:
         context = await pw.chromium.launch_persistent_context(
