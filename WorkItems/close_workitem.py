@@ -242,7 +242,9 @@ async def _run_playwright_close_async(args: argparse.Namespace, targets: list[di
                 mva = target["mva"]
                 complaint_type = target["complaint_type"]
 
-                log.info("[CLOSE] Settling UI before closing MVA %s (Type: %s, polling every 1s, 10s timeout)...", mva, complaint_type)
+                log.info("[CLOSE] %s", "-" * 40)
+                log.info("[CLOSE] MVA %s  |  type=%s", mva, complaint_type)
+                log.info("[CLOSE] Settling UI (polling every 1s, 10s timeout)...")
                 settle_start = time.monotonic()
                 settle_timeout = 10.0
                 while (time.monotonic() - settle_start) < settle_timeout:

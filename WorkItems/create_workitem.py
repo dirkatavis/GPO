@@ -214,9 +214,10 @@ async def _run_playwright_creation_async(targets: list[dict]) -> None:
                 action = target["action"]
 
                 try:
+                    log.info("[CREATE] %s", "-" * 40)
                     log.info(
-                        "[CREATE] Processing MVA %s (type=%s location=%s action=%s)...",
-                        mva, work_type, location, action,
+                        "[CREATE] MVA %s  |  type=%s  location=%s  action=%s",
+                        mva, work_type, location or "—", action or "—",
                     )
                     try:
                         await process_mva(page, mva, type=work_type, location=location,
