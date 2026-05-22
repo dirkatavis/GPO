@@ -15,7 +15,10 @@
 	
 	"glass_opcode_fallback_comment": "Fallback opcode if primary is unavailable. Used when 'Glass Repair/Replace' is not selectable.",
 	"glass_opcode_fallback": "Glass",
-	
+
+	"pm_opcode_comment": "Opcode name for PM work items. Set to null to skip opcode selection for PM.",
+	"pm_opcode": "PM Gas",
+
 	"completion_note_comment": "Text appended to work item notes when marking as complete. Examples: 'Done', 'Completed', 'Closed'.",
 	"completion_note": "Done",
 	
