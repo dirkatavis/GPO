@@ -3,7 +3,7 @@ _Date: 2026-05-22_
 
 ## Goal
 
-Generalize the create (`playwright_prototype/main.py`) and close (`close_workitem.py`) scripts to support multiple work item types via a shared CSV schema. Initial types: **Glass** (existing, proven) and **PM** (new, to be trialled via `--pause`).
+Generalize the create and close work item scripts to support multiple work item types via a shared CSV schema, and consolidate all related files into a single `WorkItems/` folder. Initial types: **Glass** (existing, proven) and **PM** (new, to be trialled via `--pause`).
 
 ---
 
@@ -32,22 +32,34 @@ mva,Type,location,action
 
 ---
 
-## Architecture
+## Folder Structure
+
+Everything moves into a self-contained `WorkItems/` folder. Files follow a consistent `<script_name>.*` naming pattern.
 
 ```
-steps.py                         ← shared step functions + COMPLAINT_TYPE_PATTERNS
-playwright_prototype/main.py     ← create flow (CSV → per-MVA work item creation)
-close_workitem.py                ← close flow (CSV → per-MVA work item close)
-sample_mvas.csv                  ← shared input file
+WorkItems/
+  create_workitem.py        ← was playwright_prototype/main.py
+  close_workitem.py         ← was close_workitem.py (root)
+  create_workitem.csv       ← was sample_mvas.csv (input for create)
+  close_workitem.csv        ← new (input for close)
+  create_workitem.log       ← was playwright_prototype.log
+  close_workitem.log        ← existing close log, moved here
+  playwright_prototype/     ← support package, moves in from root
+    __init__.py
+    steps.py
+    session.py
+    config.py
+    login.py
+    profile_launch_check.py
 ```
 
-`COMPLAINT_TYPE_PATTERNS` moves from `close_workitem.py` into `steps.py` so both scripts use one definition.
+`COMPLAINT_TYPE_PATTERNS` moves from `close_workitem.py` into `playwright_prototype/steps.py` so both scripts share one definition.
 
 ---
 
 ## Changes by File
 
-### `steps.py`
+### `playwright_prototype/steps.py`
 
 1. **Add `COMPLAINT_TYPE_PATTERNS`** (moved from `close_workitem.py`):
    ```python
@@ -70,22 +82,34 @@ sample_mvas.csv                  ← shared input file
    - `PM`: reads `pm_opcode` from config; selects it if set; skips the step entirely if unset.
      If the app requires an opcode, Create Work Item will be disabled → timeout → clear error telling us to add the opcode name to config.
 
-### `playwright_prototype/main.py`
+### `WorkItems/create_workitem.py` (was `playwright_prototype/main.py`)
 
+- Moved to `WorkItems/` and renamed.
+- Log file path updated to `WorkItems/create_workitem.log`.
+- Default CSV path updated to `WorkItems/create_workitem.csv`.
 - `load_csv`: add `type` field; validate Glass requires `location`; validate WS requires `action`; default `Type="Glass"` for backward compatibility with bare MVA lists.
 - `process_mva(page, mva, type, location, action)`: thread `type` through all step calls.
 - Update imports: `check_existing_work_item`, `select_opcode`.
 
-### `close_workitem.py`
+### `WorkItems/close_workitem.py` (was `close_workitem.py` at root)
 
-- Import `COMPLAINT_TYPE_PATTERNS` from `steps.py` (remove local definition).
-- `_load_csv`: add comment-line skipping (same pattern as `main.py`).
+- Moved to `WorkItems/` folder.
+- Log file path updated to `WorkItems/close_workitem.log`.
+- Default CSV path updated to `WorkItems/close_workitem.csv`.
+- Import `COMPLAINT_TYPE_PATTERNS` from `playwright_prototype.steps` (remove local definition).
+- `_load_csv`: add comment-line skipping.
 
-### `sample_mvas.csv`
+### `WorkItems/create_workitem.csv` (was `playwright_prototype/sample_mvas.csv`)
 
+- Renamed and moved to `WorkItems/`.
 - Updated comment header documenting unified schema.
 - Header row: `mva,Type,location,action`.
 - Existing Glass MVAs: add `Glass` in Type column; fill `location`/`action`.
+
+### `WorkItems/close_workitem.csv` (new)
+
+- Same schema as `create_workitem.csv`.
+- Seeded with same comment header; data rows left for user to populate.
 
 ---
 
@@ -125,3 +149,4 @@ All PM-specific steps log at INFO with `[STEPS] PM:` prefix for easy trace readi
 
 - Tire Damage, Body Damage, and other complaint types — deferred until PM trial complete.
 - Renaming `open_glass_work_item_tile` / `complete_glass_work_item` — functions already work generically for close flow via pattern matching; rename deferred.
+- Any callers outside `WorkItems/` that currently reference `playwright_prototype` or `close_workitem` at the root — audit and update import paths as part of the move.
