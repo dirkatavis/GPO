@@ -76,7 +76,7 @@ rem    0 = all MVAs have the specified open work item
 rem    1 = one or more MVAs missing the work item or failed
 rem ---------------------------------------------------------------------------
 
-set "CSV_PATH=playwright_prototype\sample_mvas.csv"
+set "CSV_PATH=WorkItems\create_workitem.csv"
 set "TYPE_FILTER=GLASS"
 
 if not "%~1"=="" set "CSV_PATH=%~1"
@@ -97,7 +97,7 @@ timeout /t 2 /nobreak >nul
 
 set "GLASS_AGENTIC=1"
 set "GLASS_EDGE_NO_PROFILE=1"
-"%VENV_PY%" verify_workitem.py --csv "%CSV_PATH%" --type "%TYPE_FILTER%" --no-pause
+"%VENV_PY%" WorkItems\verify_workitem.py --csv "%CSV_PATH%" --type "%TYPE_FILTER%" --no-pause
 
 echo.
 echo Exit code: %errorlevel%

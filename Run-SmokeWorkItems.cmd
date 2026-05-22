@@ -69,7 +69,7 @@ rem  To create work items (writes to Compass), pass --create as second arg:
 rem    Run-SmokeWorkItems.cmd "playwright_prototype\sample_mvas.csv" --create
 rem ---------------------------------------------------------------------------
 
-set "CSV_PATH=playwright_prototype\sample_mvas.csv"
+set "CSV_PATH=WorkItems\create_workitem.csv"
 set "CREATE_FLAG="
 
 if not "%~1"=="" (
@@ -96,7 +96,7 @@ if defined CREATE_FLAG (
 
 set "GLASS_AGENTIC=1"
 set "GLASS_EDGE_NO_PROFILE=1"
-"%VENV_PY%" create_workitem.py --csv "%CSV_PATH%" %CREATE_FLAG%
+"%VENV_PY%" WorkItems\create_workitem.py --csv "%CSV_PATH%" %CREATE_FLAG%
 
 echo.
 echo Exit code: %errorlevel%
