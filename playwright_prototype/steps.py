@@ -251,14 +251,14 @@ async def _wait_for_post_submit_progress(page: Page, previous_url: str) -> bool:
     return False
 
 
-async def handle_complaint_dialog(page: Page, mva: str, location: str, action: str, step_delay_ms: int = 0) -> None:
-    """Associate an existing glass complaint or create a new one.
+async def handle_complaint_dialog(page: Page, mva: str, type: str, location: str, action: str, step_delay_ms: int = 0) -> None:
+    """Associate an existing complaint or create a new one, branching by type (Glass or PM).
 
-    Existing path: find glass complaint tile → click → Next (advances to mileage).
-    New path: Add New Complaint → Drivability → Glass Damage → damage type → Submit.
+    Existing path: find matching complaint tile → click → Next (advances to mileage).
+    New path: Add New Complaint → Drivability → type-specific buttons → Submit Complaint.
     Both paths leave the page on the mileage dialog for complete_mileage_dialog().
     """
-    log.info("[STEPS] %s — handling complaint dialog (location=%s action=%s)", mva, location, action)
+    log.info("[STEPS] %s — handling complaint dialog (type=%s location=%s action=%s)", mva, type, location, action)
 
     async def delay():
         if step_delay_ms:
@@ -267,17 +267,17 @@ async def handle_complaint_dialog(page: Page, mva: str, location: str, action: s
     try:
         await page.wait_for_timeout(2_000)
 
-        glass_tile = page.locator(
+        pattern = COMPLAINT_TYPE_PATTERNS.get(type, _GLASS_PATTERN)
+        existing_tile = page.locator(
             '[class*="fleet-operations-pwa__complaintItem__"]'
-        ).filter(has_text=re.compile(r"glass|windshield|crack|chip|window", re.I))
+        ).filter(has_text=pattern)
 
-        if await glass_tile.count() > 0:
-            log.info("[STEPS] %s — found existing glass complaint, associating", mva)
+        if await existing_tile.count() > 0:
+            log.info("[STEPS] %s — found existing %s complaint, associating", mva, type)
             await page.wait_for_timeout(BUTTON_PUSH_DELAY_MS)
-            await glass_tile.first.click(timeout=5_000);  await delay()
+            await existing_tile.first.click(timeout=5_000);  await delay()
             await page.wait_for_timeout(BUTTON_PUSH_DELAY_MS)
             await page.get_by_role("button", name="Next").click(timeout=10_000)
-            # Verify mileage dialog appeared — Next button on complaint list transitions to mileage
             mileage_appeared = False
             for locator in [
                 page.get_by_role("heading", name=re.compile(r"Mileage", re.I)),
@@ -295,7 +295,7 @@ async def handle_complaint_dialog(page: Page, mva: str, location: str, action: s
             return
 
         # No existing complaint — create new
-        log.info("[STEPS] %s — no existing glass complaint, creating new", mva)
+        log.info("[STEPS] %s — no existing %s complaint, creating new", mva, type)
         add_btn = page.locator(
             "//button[.//p[contains(text(),'Add New Complaint')] or .//p[contains(text(),'Create New Complaint')]]"
             " | //button[normalize-space()='Add New Complaint']"
@@ -309,6 +309,39 @@ async def handle_complaint_dialog(page: Page, mva: str, location: str, action: s
         await page.get_by_role("button", name=drivability).click(timeout=10_000)
         log.info("[STEPS] %s — drivability: %s", mva, drivability);  await delay()
 
+        if type == "PM":
+            await page.wait_for_timeout(BUTTON_PUSH_DELAY_MS)
+            await page.get_by_role("button", name="PM").click(timeout=10_000)
+            log.info("[STEPS] %s PM: PM button clicked", mva);  await delay()
+
+            # Wait for Additional Info screen — leave checkbox at default (unchecked), skip photo
+            await page.locator('[class*="fleet-operations-pwa__"]').filter(
+                has_text=re.compile(r"additional info", re.I)
+            ).first.wait_for(state="visible", timeout=15_000)
+            log.info("[STEPS] %s PM: Additional Info screen visible", mva);  await delay()
+
+            pre_submit_url = page.url
+            await _click_submit_complaint(page, mva)
+            log.info("[STEPS] %s PM: PM complaint submitted", mva)
+
+            if not await _wait_for_post_submit_progress(page, pre_submit_url):
+                pm_tile_post = page.locator(
+                    '[class*="fleet-operations-pwa__complaintItem__"]'
+                ).filter(has_text=_PM_PATTERN)
+                if await pm_tile_post.count() > 0:
+                    log.info("[STEPS] %s PM: post-submit complaint list shown, associating", mva)
+                    await page.wait_for_timeout(BUTTON_PUSH_DELAY_MS)
+                    await pm_tile_post.first.click(timeout=5_000);  await delay()
+                    await page.wait_for_timeout(BUTTON_PUSH_DELAY_MS)
+                    await page.get_by_role("button", name="Next").click(timeout=10_000)
+
+                if not await _wait_for_post_submit_progress(page, pre_submit_url):
+                    raise RuntimeError(
+                        f"[STEPS] {mva} PM — submit completed without mileage/url transition"
+                    )
+            return
+
+        # Glass path
         await page.wait_for_timeout(BUTTON_PUSH_DELAY_MS)
         await page.get_by_role("button", name="Glass Damage").click(timeout=10_000);  await delay()
 
@@ -328,26 +361,20 @@ async def handle_complaint_dialog(page: Page, mva: str, location: str, action: s
             "[STEPS] %s — submit did not show mileage/url transition; attempting complaint association fallback",
             mva,
         )
-
-        # After Submit, the app may return to the complaint list rather than
-        # auto-advancing to the mileage dialog.  If so, select the new complaint
-        # and click Next exactly as in the existing-complaint path.
         await page.wait_for_timeout(2_000)
         glass_tile_post = page.locator(
             '[class*="fleet-operations-pwa__complaintItem__"]'
-        ).filter(has_text=re.compile(r"glass|windshield|crack|chip|window", re.I))
+        ).filter(has_text=_GLASS_PATTERN)
         if await glass_tile_post.count() > 0:
             log.info("[STEPS] %s — post-submit: complaint list shown, associating new complaint", mva)
             await page.wait_for_timeout(BUTTON_PUSH_DELAY_MS)
-            await glass_tile_post.first.click(timeout=5_000)
-            await delay()
+            await glass_tile_post.first.click(timeout=5_000);  await delay()
             await page.wait_for_timeout(BUTTON_PUSH_DELAY_MS)
             await page.get_by_role("button", name="Next").click(timeout=10_000)
 
         if not await _wait_for_post_submit_progress(page, pre_submit_url):
             raise RuntimeError(
-                "[STEPS] "
-                f"{mva} — submit completed without mileage/url transition; backend may have rejected write"
+                f"[STEPS] {mva} — submit completed without mileage/url transition; backend may have rejected write"
             )
 
     except Exception as exc:

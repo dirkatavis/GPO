@@ -78,7 +78,7 @@ class TestHandleComplaintDialogExistingPath:
         from playwright_prototype.steps import handle_complaint_dialog
 
         page, tile_first, next_btn, _ = _make_page_mock()
-        asyncio.run(handle_complaint_dialog(page, "59002156", "WS", "Replace"))
+        asyncio.run(handle_complaint_dialog(page, "59002156", "Glass", "WS", "Replace"))
 
         tile_first.click.assert_called_once()
 
@@ -87,7 +87,7 @@ class TestHandleComplaintDialogExistingPath:
         from playwright_prototype.steps import handle_complaint_dialog
 
         page, tile_first, next_btn, _ = _make_page_mock()
-        asyncio.run(handle_complaint_dialog(page, "59002156", "WS", "Replace"))
+        asyncio.run(handle_complaint_dialog(page, "59002156", "Glass", "WS", "Replace"))
 
         next_btn.click.assert_called_once()
 
@@ -96,7 +96,7 @@ class TestHandleComplaintDialogExistingPath:
         from playwright_prototype.steps import handle_complaint_dialog
 
         page, _, _, add_new_btn_first = _make_page_mock()
-        asyncio.run(handle_complaint_dialog(page, "59002156", "WS", "Replace"))
+        asyncio.run(handle_complaint_dialog(page, "59002156", "Glass", "WS", "Replace"))
 
         add_new_btn_first.click.assert_not_called()
 
@@ -105,7 +105,7 @@ class TestHandleComplaintDialogExistingPath:
         from playwright_prototype.steps import handle_complaint_dialog
 
         page, _, _, _ = _make_page_mock()
-        asyncio.run(handle_complaint_dialog(page, "59002156", "WS", "Replace"))
+        asyncio.run(handle_complaint_dialog(page, "59002156", "Glass", "WS", "Replace"))
 
 
 class TestMapDamageType:
@@ -191,7 +191,7 @@ class TestHandleComplaintDialogNewPathDamageType:
 
         with patch("playwright_prototype.steps._click_submit_complaint", new=AsyncMock()), \
              patch("playwright_prototype.steps._wait_for_post_submit_progress", new=AsyncMock(return_value=True)):
-            asyncio.run(handle_complaint_dialog(page, "99999999", "RW", "Replace"))
+            asyncio.run(handle_complaint_dialog(page, "99999999", "Glass", "RW", "Replace"))
 
         damage_selectors = [s for s in locator_calls if "Side/Rear Window Damage" in str(s)]
         assert damage_selectors, (
@@ -206,7 +206,7 @@ class TestHandleComplaintDialogNewPathDamageType:
 
         with patch("playwright_prototype.steps._click_submit_complaint", new=AsyncMock()), \
              patch("playwright_prototype.steps._wait_for_post_submit_progress", new=AsyncMock(return_value=True)):
-            asyncio.run(handle_complaint_dialog(page, "99999999", "WS", "Repair"))
+            asyncio.run(handle_complaint_dialog(page, "99999999", "Glass", "WS", "Repair"))
 
         damage_selectors = [s for s in locator_calls if "Windshield Chip" in str(s)]
         assert damage_selectors, (
