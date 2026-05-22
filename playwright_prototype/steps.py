@@ -542,6 +542,7 @@ async def complete_glass_work_item(page: Page, mva: str, note: str = "Done", typ
         await page.get_by_role("button", name="Mark Complete").click(timeout=10_000)
 
         correction = page.locator(
+            'textarea[class*="textAreaContainer"], '
             'textarea[placeholder*="Enter Correction"], input[placeholder*="Enter Correction"]'
         ).first
         await correction.wait_for(state="visible", timeout=15_000)
