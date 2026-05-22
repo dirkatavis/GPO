@@ -34,7 +34,7 @@ from playwright_prototype.main import process_mva
 from playwright_prototype.session import ensure_profile_context
 from playwright_prototype.steps import (
     ExistingWorkItemError,
-    check_existing_glass_work_item,
+    check_existing_work_item,
     navigate_to_mva as pw_navigate_to_mva,
     warmup_compass as pw_warmup_compass,
 )
@@ -82,7 +82,7 @@ async def _playwright_smoke(mva: str, do_create: bool, location: str, action: st
             # Step 3: Check for existing work item
             log.info("[SMOKE] Step 3 — Checking for existing open glass work item...")
             try:
-                await check_existing_glass_work_item(page, mva)
+                await check_existing_work_item(page, mva, "Glass")
                 existing = False
             except ExistingWorkItemError:
                 existing = True

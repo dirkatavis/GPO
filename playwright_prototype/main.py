@@ -21,16 +21,18 @@ from playwright_prototype.config import (
     resolve_step_delay,
 )
 from playwright_prototype.session import ensure_attached_context, ensure_profile_context
+# DEPRECATED: this prototype is superseded by WorkItems/create_workitem.py
+# Do not add new features here. Remove once WorkItems/ is confirmed stable.
 from playwright_prototype.steps import (
     ExistingWorkItemError,
-    check_existing_glass_work_item,
+    check_existing_work_item,
     click_add_work_item,
     complete_mileage_dialog,
     confirm_completion,
     create_work_item,
     handle_complaint_dialog,
     navigate_to_mva,
-    select_glass_opcode,
+    select_opcode,
     warmup_compass,
 )
 
@@ -124,7 +126,7 @@ def load_csv(path: Path) -> list[dict]:
         return []
     rows = []
     with open(path, newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
+        reader = csv.DictReader(line for line in f if not line.startswith("#"))
         for i, row in enumerate(reader, start=2):
             mva = (row.get("mva") or "").strip()
             if not mva:
@@ -145,11 +147,11 @@ async def process_mva(page, mva: str, location: str, action: str, step_delay_ms:
             await page.wait_for_timeout(step_delay_ms)
 
     await navigate_to_mva(page, mva);                                        await delay()
-    await check_existing_glass_work_item(page, mva);                         await delay()
+    await check_existing_work_item(page, mva, "Glass");                      await delay()
     await click_add_work_item(page, mva);                                    await delay()
     await handle_complaint_dialog(page, mva, location, action, step_delay_ms); await delay()
     await complete_mileage_dialog(page, mva);                                await delay()
-    await select_glass_opcode(page);                                         await delay()
+    await select_opcode(page, "Glass");                                      await delay()
     await create_work_item(page);                                            await delay()
     await confirm_completion(page)
 
@@ -231,11 +233,11 @@ async def main(
                     await page.pause()
 
                 await step(navigate_to_mva(page, mva),                          "Step 1: navigated to MVA")
-                await step(check_existing_glass_work_item(page, mva),            "Step 2: pre-check no existing glass work item")
+                await step(check_existing_work_item(page, mva, "Glass"),         "Step 2: pre-check no existing glass work item")
                 await step(click_add_work_item(page, mva),                       "Step 3: Add Work Item clicked")
                 await step(handle_complaint_dialog(page, mva, location, action, step_delay_ms), "Step 4: complaint dialog handled")
                 await step(complete_mileage_dialog(page, mva),                   "Step 5: mileage dialog advanced")
-                await step(select_glass_opcode(page),                            "Step 6: Glass opcode selected")
+                await step(select_opcode(page, "Glass"),                         "Step 6: Glass opcode selected")
                 await step(create_work_item(page),                               "Step 7: Create Work Item clicked")
                 await step(confirm_completion(page),                             "Step 8: Done clicked — work item created")
                 return 0

@@ -40,7 +40,6 @@ from playwright_prototype.main import process_mva
 from playwright_prototype.session import ensure_profile_context
 from playwright_prototype.steps import (
     ExistingWorkItemError,
-    check_existing_glass_work_item,
     navigate_to_mva as pw_navigate_to_mva,
     warmup_compass as pw_warmup_compass,
 )
