@@ -152,29 +152,31 @@ async def _playwright_close_work_item(page: "Page", mva: str, complaint_type: st
     if count == 0:
         return RESULT_NOT_FOUND, ""
 
-    tile = tiles.first
-    raw = (await tile.inner_text()).strip()
-    detail = " | ".join(line.strip() for line in raw.splitlines() if line.strip())
-    
-    # Read the Complaints row to verify the actual complaint type
-    complaints_elem = tile.locator("[class*='fleet-operations-pwa__left__']").filter(
-        has_text=re.compile(r"complaints\s*:", re.I)
-    )
-    if await complaints_elem.count() > 0:
-        complaints_text = (await complaints_elem.first.inner_text()).strip()
-        log.info("[CLOSE] %s - complaints row: %s", mva, complaints_text)
-        
-        match = re.search(r"complaints\s*:\s*(.+)", complaints_text, re.I)
-        if match:
-            actual_complaint = match.group(1).strip()
-            if not pattern.search(actual_complaint):
-                log.warning("[CLOSE] %s - Type mismatch: expected %s but complaints says: %s", mva, complaint_type, actual_complaint)
-                return RESULT_NOT_FOUND, ""
+    for idx in range(count):
+        tile = tiles.nth(idx)
+        raw = (await tile.inner_text()).strip()
+        detail = " | ".join(line.strip() for line in raw.splitlines() if line.strip())
 
-    await open_glass_work_item_tile(page, mva, complaint_type)
-    await complete_glass_work_item(page, mva, type=complaint_type)
+        complaints_elem = tile.locator("[class*='fleet-operations-pwa__left__']").filter(
+            has_text=re.compile(r"complaints\s*:", re.I)
+        )
+        if await complaints_elem.count() > 0:
+            complaints_text = (await complaints_elem.first.inner_text()).strip()
+            log.info("[CLOSE] %s - tile %d complaints row: %s", mva, idx, complaints_text)
 
-    return RESULT_CLOSED, detail
+            match = re.search(r"complaints\s*:\s*(.+)", complaints_text, re.I)
+            if match:
+                actual_complaint = match.group(1).strip()
+                if not pattern.search(actual_complaint):
+                    log.info("[CLOSE] %s - tile %d type mismatch (expected %s, got %s) — skipping", mva, idx, complaint_type, actual_complaint)
+                    continue
+
+        await open_glass_work_item_tile(page, mva, complaint_type)
+        await complete_glass_work_item(page, mva, type=complaint_type)
+        return RESULT_CLOSED, detail
+
+    log.warning("[CLOSE] %s - no open %s tile found among %d open tile(s)", mva, complaint_type, count)
+    return RESULT_NOT_FOUND, ""
 
 
 async def _run_playwright_close_async(args: argparse.Namespace, targets: list[dict]) -> list[dict]:
@@ -218,7 +220,7 @@ async def _run_playwright_close_async(args: argparse.Namespace, targets: list[di
                 "[CLOSE] Microsoft Edge is still running after kill attempt. "
                 "Please close all Edge windows manually and try again."
             )
-            return []
+            sys.exit(1)
         log.info("[CLOSE] Edge processes cleared — proceeding with launch.")
 
     async with async_playwright() as pw:

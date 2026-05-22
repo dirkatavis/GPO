@@ -5,7 +5,7 @@
 #   mva      — MVA number (required)
 #   Type     — Work item type: Glass, PM               (required; defaults to Glass if omitted)
 #   location — Glass only: glass area code             (required for Glass, e.g. WS, BW, FLD)
-#   action   — Glass/WS only: Replace or Repair        (required when Type=Glass and location=WS)
+#   action   — Glass/WS only: Replace or Repair        (defaults to Replace if omitted)
 #
 # Notes:
 #   - Repair is only valid for windshields (location=WS)

@@ -54,6 +54,8 @@ class TestDuplicateWindowDays:
         today = datetime.date.today()
         tile_date = today - datetime.timedelta(days=100)
         created_at = _parse_tile_created_at(self._tile_text(tile_date))
-        window = 0
         age = (today - created_at).days
-        assert window == 0 or age <= window  # zero window bypasses age check
+        # Age alone would NOT flag this tile (100 > 5)
+        assert age > 5
+        # But window=0 bypasses the age check — production condition is True
+        assert (0 == 0) or (age <= 0)

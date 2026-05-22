@@ -47,27 +47,38 @@ RESULT_TIMEOUT = "timeout"
 
 
 def _load_csv(path: str) -> list[dict]:
-    """Return rows from a CSV with at minimum an 'mva' column."""
+    """Return rows from a CSV with at minimum an 'mva' column, skipping comment lines."""
     with open(path, newline="", encoding="utf-8") as f:
-        return [row for row in csv.DictReader(f) if row.get("mva", "").strip()]
+        reader = csv.DictReader(line for line in f if not line.startswith("#"))
+        if not reader.fieldnames or "mva" not in reader.fieldnames:
+            log.error("[VERIFY] CSV missing required 'mva' column: %s", path)
+            sys.exit(1)
+        return [row for row in reader if row.get("mva", "").strip()]
+
+
+_PM_VERIFY_KEYWORD = "pm"
+_TYPE_TO_VERIFY_KEYWORD = {"PM": _PM_VERIFY_KEYWORD}
 
 
 def _resolve_row_work_item_type(row: dict, default_type: str) -> str:
-    """Resolve per-row type from CSV columns with sane fallbacks.
+    """Resolve per-row verify keyword from CSV columns with sane fallbacks.
 
     Priority:
-    1) Explicit ``type`` column
-    2) ``action`` column mapping (Repair -> glass repair, else glass damage)
-    3) CLI/default type
+    1) ``Type`` column (capital T) — maps PM -> 'pm', Glass -> action-derived keyword
+    2) Lowercase ``type`` column (legacy)
+    3) ``action`` column mapping (Repair -> windshield chip, Replace -> glass damage)
+    4) CLI/default type
     """
+    work_type = (row.get("Type") or "").strip()
+    if work_type in _TYPE_TO_VERIFY_KEYWORD:
+        return _TYPE_TO_VERIFY_KEYWORD[work_type]
+
     explicit_type = (row.get("type") or "").strip()
     if explicit_type:
         return explicit_type
 
     action = (row.get("action") or "").strip().lower()
     if action == "repair":
-        # Repair work items are filed under "Glass Damage" with subtype "Windshield Chip"
-        # Tile text contains "windshield chip", not "glass repair"
         return "windshield chip"
     if action in {"replace", "replacement"}:
         return "glass damage"
