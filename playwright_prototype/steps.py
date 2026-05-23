@@ -38,7 +38,7 @@ def _map_damage_type(location: str, action: str) -> str:
     return "Side/Rear Window Damage"
 
 
-def _is_unready_vehicle_value(value: str) -> bool:
+def _is_unready_vehicle_value(value: str | None) -> bool:
     """Return True when a vehicle-property value is not yet populated."""
     stripped = (value or "").strip()
     if not stripped:
@@ -64,23 +64,27 @@ async def _wait_for_vehicle_details_ready(page: Page, mva: str, timeout_ms: int 
 
     deadline = time.monotonic() + (timeout_ms / 1000.0)
     last_seen = ""
+    last_error: Exception | None = None
 
     while time.monotonic() < deadline:
         try:
             raw_value = (await value_locator.inner_text()).strip()
             last_seen = raw_value
+            last_error = None
             if not _is_unready_vehicle_value(raw_value):
                 digits = _normalize_digits(raw_value)
                 if last8 in raw_value or last8 in digits:
                     log.info("[STEPS] %s — vehicle details ready (MVA=%s)", mva, raw_value)
                     return
-        except Exception:
-            pass
+        except Exception as exc:
+            last_error = exc
+            log.debug("[STEPS] %s — readiness probe retry due to locator/read error: %s", mva, exc)
         await page.wait_for_timeout(400)
 
+    extra = f"; last_error={last_error!r}" if last_error is not None else ""
     raise RuntimeError(
         f"[STEPS] {mva} — vehicle details not ready; MVA value stayed empty/hyphen or mismatched"
-        f" (last_seen={last_seen!r})"
+        f" (last_seen={last_seen!r}){extra}"
     )
 
 
