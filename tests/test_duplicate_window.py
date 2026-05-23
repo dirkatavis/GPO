@@ -1,7 +1,9 @@
 """Tests for _parse_tile_created_at and the duplicate_window_days logic."""
+import asyncio
 import datetime
 import pytest
-from playwright_prototype.steps import _parse_tile_created_at
+from playwright_prototype.steps import ExistingWorkItemError, _parse_tile_created_at
+import playwright_prototype.steps as steps
 
 
 class TestParseTileCreatedAt:
@@ -55,7 +57,84 @@ class TestDuplicateWindowDays:
         tile_date = today - datetime.timedelta(days=100)
         created_at = _parse_tile_created_at(self._tile_text(tile_date))
         age = (today - created_at).days
-        # Age alone would NOT flag this tile (100 > 5)
         assert age > 5
-        # But window=0 bypasses the age check — production condition is True
-        assert (0 == 0) or (age <= 0)
+
+
+class _FakeTile:
+    def __init__(self, text: str):
+        self._text = text
+
+    async def inner_text(self) -> str:
+        return self._text
+
+
+class _FakeLocator:
+    def __init__(self, tile_texts: list[str], visible: bool = True):
+        self._tile_texts = tile_texts
+        self._visible = visible
+
+    @property
+    def first(self):
+        return self
+
+    def filter(self, **_kwargs):
+        return self
+
+    async def wait_for(self, **_kwargs):
+        if not self._visible:
+            raise RuntimeError("not visible")
+
+    async def count(self) -> int:
+        return len(self._tile_texts)
+
+    def nth(self, idx: int):
+        return _FakeTile(self._tile_texts[idx])
+
+
+class _FakePage:
+    def __init__(self, tile_texts: list[str], visible: bool = True):
+        self._tile_texts = tile_texts
+        self._visible = visible
+
+    def locator(self, _selector: str):
+        return _FakeLocator(self._tile_texts, visible=self._visible)
+
+
+class TestCheckExistingWorkItemDuplicateWindow:
+    def _tile_text(self, date: datetime.date | None, complaints: str = "PM") -> str:
+        if date is None:
+            return f"Open\nComplaints: {complaints}\nEstimated Labor Time: 0.5"
+        return (
+            f"Open\nComplaints: {complaints}\n"
+            f"Created At: {date.month}/{date.day}/{date.year}, 1:39:33 PM\nEstimated Labor Time: 0.5"
+        )
+
+    def test_within_window_raises_duplicate(self, monkeypatch):
+        monkeypatch.setattr(steps, "get_config", lambda key, default=None: 5 if key == "duplicate_window_days" else default)
+        tile_date = datetime.date.today() - datetime.timedelta(days=2)
+        page = _FakePage([self._tile_text(tile_date)])
+
+        with pytest.raises(ExistingWorkItemError):
+            asyncio.run(steps.check_existing_work_item(page, "12345", "PM"))
+
+    def test_beyond_window_does_not_raise(self, monkeypatch):
+        monkeypatch.setattr(steps, "get_config", lambda key, default=None: 5 if key == "duplicate_window_days" else default)
+        tile_date = datetime.date.today() - datetime.timedelta(days=10)
+        page = _FakePage([self._tile_text(tile_date)])
+
+        asyncio.run(steps.check_existing_work_item(page, "12345", "PM"))
+
+    def test_missing_created_at_raises_duplicate(self, monkeypatch):
+        monkeypatch.setattr(steps, "get_config", lambda key, default=None: 5 if key == "duplicate_window_days" else default)
+        page = _FakePage([self._tile_text(None)])
+
+        with pytest.raises(ExistingWorkItemError):
+            asyncio.run(steps.check_existing_work_item(page, "12345", "PM"))
+
+    def test_zero_window_always_raises(self, monkeypatch):
+        monkeypatch.setattr(steps, "get_config", lambda key, default=None: 0 if key == "duplicate_window_days" else default)
+        tile_date = datetime.date.today() - datetime.timedelta(days=100)
+        page = _FakePage([self._tile_text(tile_date)])
+
+        with pytest.raises(ExistingWorkItemError):
+            asyncio.run(steps.check_existing_work_item(page, "12345", "PM"))

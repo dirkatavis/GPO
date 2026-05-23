@@ -9,9 +9,7 @@ import asyncio
 import csv
 import os
 import re
-import sys
 import time
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from config.config_loader import get_config
@@ -32,6 +30,7 @@ from playwright_prototype.config import (
     resolve_step_delay,
 )
 from playwright_prototype.session import ensure_profile_context
+from playwright_prototype.steps import COMPLAINT_TYPE_PATTERNS
 from playwright_prototype.steps import warmup_compass as pw_warmup_compass
 from playwright_prototype.steps import navigate_to_mva as pw_navigate_to_mva
 
@@ -47,55 +46,75 @@ RESULT_TIMEOUT = "timeout"
 
 
 def _load_csv(path: str) -> list[dict]:
-    """Return rows from a CSV with at minimum an 'mva' column, skipping comment lines."""
+    """Return rows from a CSV with unified schema columns, skipping comment lines."""
     with open(path, newline="", encoding="utf-8") as f:
         reader = csv.DictReader(line for line in f if not line.startswith("#"))
         if not reader.fieldnames or "mva" not in reader.fieldnames:
             log.error("[VERIFY] CSV missing required 'mva' column: %s", path)
             sys.exit(1)
+        if "Type" not in reader.fieldnames:
+            log.error("[VERIFY] CSV missing required 'Type' column: %s", path)
+            sys.exit(1)
         return [row for row in reader if row.get("mva", "").strip()]
 
 
-_PM_VERIFY_KEYWORD = "pm"
-_TYPE_TO_VERIFY_KEYWORD = {"PM": _PM_VERIFY_KEYWORD}
+_TYPE_TO_VERIFY_KEYWORD = {
+    "PM": "PM",
+    "Glass": "Glass",
+}
 
 
-def _resolve_row_work_item_type(row: dict, default_type: str) -> str:
-    """Resolve per-row verify keyword from CSV columns with sane fallbacks.
-
-    Priority:
-    1) ``Type`` column (capital T) — maps PM -> 'pm', Glass -> action-derived keyword
-    2) Lowercase ``type`` column (legacy)
-    3) ``action`` column mapping (Repair -> windshield chip, Replace -> glass damage)
-    4) CLI/default type
-    """
-    work_type = (row.get("Type") or "").strip()
+def _resolve_row_work_item_type(row: dict) -> str:
+    """Resolve per-row complaint type from the unified CSV schema."""
+    work_type = (row.get("Type") or "").strip().title()
     if work_type in _TYPE_TO_VERIFY_KEYWORD:
         return _TYPE_TO_VERIFY_KEYWORD[work_type]
 
-    explicit_type = (row.get("type") or "").strip()
-    if explicit_type:
-        return explicit_type
-
-    action = (row.get("action") or "").strip().lower()
-    if action == "repair":
-        return "windshield chip"
-    if action in {"replace", "replacement"}:
-        return "glass damage"
-
-    return default_type
+    valid_types = get_config("valid_complaint_types", ["Glass", "PM"])
+    log.error(
+        "[VERIFY] Invalid Type '%s' for MVA %s — expected one of: %s",
+        (row.get("Type") or "").strip(),
+        (row.get("mva") or "").strip() or "<unknown>",
+        ", ".join(valid_types),
+    )
+    sys.exit(1)
 
 
 def _build_targets(args: argparse.Namespace) -> list[tuple[str, str]]:
     if args.csv_path:
         rows = _load_csv(args.csv_path)
         targets = [
-            (r["mva"].strip(), _resolve_row_work_item_type(r, args.work_item_type))
+            (r["mva"].strip(), _resolve_row_work_item_type(r))
             for r in rows
         ]
+        if not targets:
+            log.error("[VERIFY] No valid MVA rows found in CSV: %s", args.csv_path)
+            sys.exit(1)
         log.info("[VERIFY] Loaded %d MVA(s) from %s", len(targets), args.csv_path)
         return targets
     return [(args.mva.strip(), args.work_item_type)]
+
+
+def _extract_complaints_text(tile_text: str) -> str:
+    """Extract the complaint value from a tile's text (e.g. 'Complaints: PM')."""
+    for line in tile_text.splitlines():
+        match = re.search(r"complaints\s*:\s*(.+)", line, re.I)
+        if match:
+            return match.group(1).strip()
+    return ""
+
+
+def _resolve_complaint_pattern(work_item_type: str) -> re.Pattern:
+    """Resolve a regex matcher for complaint text based on type/keyword input."""
+    normalized = (work_item_type or "").strip()
+    if normalized in COMPLAINT_TYPE_PATTERNS:
+        return COMPLAINT_TYPE_PATTERNS[normalized]
+    lowered = normalized.lower()
+    if lowered == "pm":
+        return COMPLAINT_TYPE_PATTERNS["PM"]
+    if any(token in lowered for token in ["glass", "windshield", "chip", "crack", "window"]):
+        return COMPLAINT_TYPE_PATTERNS["Glass"]
+    return re.compile(re.escape(normalized), re.I)
 
 
 def _capture_selenium_screenshot(driver: Any, label: str, mva: str) -> None:
@@ -230,7 +249,7 @@ def _run_selenium_verification(args: argparse.Namespace, targets: list[tuple[str
 
 async def _playwright_find_work_item(page: "Page", work_item_type: str) -> tuple[bool, str]:
     """Return (found, tile_detail) where tile_detail is the matching tile's text (empty if not found)."""
-    keyword = work_item_type.strip().lower()
+    pattern = _resolve_complaint_pattern(work_item_type)
 
     tiles = page.locator("div[class*='fleet-operations-pwa__scan-record__']").filter(
         has_text=re.compile(r"open", re.I)
@@ -239,7 +258,8 @@ async def _playwright_find_work_item(page: "Page", work_item_type: str) -> tuple
     count = await tiles.count()
     for idx in range(count):
         raw = (await tiles.nth(idx).inner_text()).strip()
-        if keyword in raw.lower():
+        complaints = _extract_complaints_text(raw)
+        if complaints and pattern.search(complaints):
             # Condense multi-line tile text to a single readable line
             detail = " | ".join(line.strip() for line in raw.splitlines() if line.strip())
             return True, detail

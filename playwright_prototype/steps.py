@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from config.config_loader import get_config
 
 _GLASS_PATTERN = re.compile(r"glass|windshield|crack|chip|window", re.I)
-_PM_PATTERN = re.compile(r"PM", re.I)
+_PM_PATTERN = re.compile(r"\bpm\b(?:\s+gas)?\b", re.I)
 
 COMPLAINT_TYPE_PATTERNS: dict[str, re.Pattern] = {
     "Glass": _GLASS_PATTERN,
@@ -157,16 +157,31 @@ def _parse_tile_created_at(tile_text: str) -> datetime.date | None:
         return None
 
 
-async def check_existing_work_item(page: Page, mva: str, type: str) -> None:
+def _extract_complaints_text(tile_text: str) -> str:
+    """Extract complaint text from a tile, returning empty string if absent."""
+    for line in tile_text.splitlines():
+        match = re.search(r"complaints\s*:\s*(.+)", line, re.I)
+        if match:
+            return match.group(1).strip()
+    return ""
+
+
+def _tile_matches_complaint_type(tile_text: str, pattern: re.Pattern) -> bool:
+    """Match complaint type using only the complaints row to avoid timestamp false positives."""
+    complaints = _extract_complaints_text(tile_text)
+    return bool(complaints and pattern.search(complaints))
+
+
+async def check_existing_work_item(page: Page, mva: str, complaint_type: str) -> None:
     """Raise ExistingWorkItemError if a recent open work item of the given type already exists.
 
     Uses COMPLAINT_TYPE_PATTERNS[type] to match tiles. Only raises if the tile's
     Created At date is within duplicate_window_days of today (default 5). Tiles older
     than the window are ignored. If Created At is missing, the tile is treated as recent.
     """
-    pattern = COMPLAINT_TYPE_PATTERNS.get(type, _GLASS_PATTERN)
+    pattern = COMPLAINT_TYPE_PATTERNS.get(complaint_type, _GLASS_PATTERN)
     window_days = int(get_config("duplicate_window_days", 5))
-    log.info("[STEPS] %s — checking for existing open %s work item (window=%d days)", mva, type, window_days)
+    log.info("[STEPS] %s — checking for existing open %s work item (window=%d days)", mva, complaint_type, window_days)
     try:
         container = page.locator('[class*="fleet-operations-pwa__scan-record__"]').first
         try:
@@ -175,26 +190,28 @@ async def check_existing_work_item(page: Page, mva: str, type: str) -> None:
             log.info("[STEPS] %s — no work items container found, safe to proceed", mva)
             return
 
-        open_item = page.locator(
+        open_tiles = page.locator(
             '[class*="fleet-operations-pwa__scan-record__"]'
-        ).filter(has_text=pattern).filter(has_text=re.compile(r"open", re.I))
-        count = await open_item.count()
+        ).filter(has_text=re.compile(r"open", re.I))
+        count = await open_tiles.count()
         today = datetime.date.today()
         for idx in range(count):
-            tile_text = await open_item.nth(idx).inner_text()
+            tile_text = await open_tiles.nth(idx).inner_text()
+            if not _tile_matches_complaint_type(tile_text, pattern):
+                continue
             created_at = _parse_tile_created_at(tile_text)
             if created_at is None:
-                log.warning("[STEPS] %s — open %s tile has no Created At; treating as recent dup", mva, type)
+                log.warning("[STEPS] %s — open %s tile has no Created At; treating as recent dup", mva, complaint_type)
                 raise ExistingWorkItemError(
-                    f"{mva} — open {type} work item already exists (no date): {tile_text.strip()!r}"
+                    f"{mva} — open {complaint_type} work item already exists (no date): {tile_text.strip()!r}"
                 )
             age_days = (today - created_at).days
             if window_days == 0 or age_days <= window_days:
                 raise ExistingWorkItemError(
-                    f"{mva} — open {type} work item already exists (created {age_days}d ago): {tile_text.strip()!r}"
+                    f"{mva} — open {complaint_type} work item already exists (created {age_days}d ago): {tile_text.strip()!r}"
                 )
-            log.info("[STEPS] %s — open %s tile found but is %d days old (> window %d) — ignoring", mva, type, age_days, window_days)
-        log.info("[STEPS] %s — no recent open %s work item found, safe to proceed", mva, type)
+            log.info("[STEPS] %s — open %s tile found but is %d days old (> window %d) — ignoring", mva, complaint_type, age_days, window_days)
+        log.info("[STEPS] %s — no recent open %s work item found, safe to proceed", mva, complaint_type)
     except ExistingWorkItemError:
         raise
     except Exception as exc:
@@ -279,14 +296,14 @@ async def _wait_for_post_submit_progress(page: Page, previous_url: str) -> bool:
     return False
 
 
-async def handle_complaint_dialog(page: Page, mva: str, type: str, location: str, action: str, step_delay_ms: int = 0) -> None:
+async def handle_complaint_dialog(page: Page, mva: str, complaint_type: str, location: str, action: str, step_delay_ms: int = 0) -> None:
     """Associate an existing complaint or create a new one, branching by type (Glass or PM).
 
     Existing path: find matching complaint tile → click → Next (advances to mileage).
     New path: Add New Complaint → Drivability → type-specific buttons → Submit Complaint.
     Both paths leave the page on the mileage dialog for complete_mileage_dialog().
     """
-    log.info("[STEPS] %s — handling complaint dialog (type=%s location=%s action=%s)", mva, type, location, action)
+    log.info("[STEPS] %s — handling complaint dialog (type=%s location=%s action=%s)", mva, complaint_type, location, action)
 
     async def delay():
         if step_delay_ms:
@@ -295,13 +312,13 @@ async def handle_complaint_dialog(page: Page, mva: str, type: str, location: str
     try:
         await page.wait_for_timeout(2_000)
 
-        pattern = COMPLAINT_TYPE_PATTERNS.get(type, _GLASS_PATTERN)
+        pattern = COMPLAINT_TYPE_PATTERNS.get(complaint_type, _GLASS_PATTERN)
         existing_tile = page.locator(
             '[class*="fleet-operations-pwa__complaintItem__"]'
         ).filter(has_text=pattern)
 
         if await existing_tile.count() > 0:
-            log.info("[STEPS] %s — found existing %s complaint, associating", mva, type)
+            log.info("[STEPS] %s — found existing %s complaint, associating", mva, complaint_type)
             await page.wait_for_timeout(BUTTON_PUSH_DELAY_MS)
             await existing_tile.first.click(timeout=5_000);  await delay()
             await page.wait_for_timeout(BUTTON_PUSH_DELAY_MS)
@@ -323,7 +340,7 @@ async def handle_complaint_dialog(page: Page, mva: str, type: str, location: str
             return
 
         # No existing complaint — create new
-        log.info("[STEPS] %s — no existing %s complaint, creating new", mva, type)
+        log.info("[STEPS] %s — no existing %s complaint, creating new", mva, complaint_type)
         add_btn = page.locator(
             "//button[.//p[contains(text(),'Add New Complaint')] or .//p[contains(text(),'Create New Complaint')]]"
             " | //button[normalize-space()='Add New Complaint']"
@@ -337,7 +354,7 @@ async def handle_complaint_dialog(page: Page, mva: str, type: str, location: str
         await page.get_by_role("button", name=drivability).click(timeout=10_000)
         log.info("[STEPS] %s — drivability: %s", mva, drivability);  await delay()
 
-        if type == "PM":
+        if complaint_type == "PM":
             await page.wait_for_timeout(BUTTON_PUSH_DELAY_MS)
             await page.get_by_role("button", name="PM").click(timeout=10_000)
             log.info("[STEPS] %s PM: PM button clicked", mva);  await delay()
@@ -427,13 +444,13 @@ async def complete_mileage_dialog(page: Page, mva: str) -> None:
         raise RuntimeError(f"[STEPS] complete_mileage_dialog failed for {mva}: {exc}") from exc
 
 
-async def select_opcode(page: Page, type: str) -> None:
+async def select_opcode(page: Page, complaint_type: str) -> None:
     """Select the appropriate opcode for the given work item type.
 
     Glass: selects glass_opcode_primary (default 'Glass Repair/Replace').
     PM: selects pm_opcode config value (default 'PM Gas'); skips step if pm_opcode is null.
     """
-    if type == "PM":
+    if complaint_type == "PM":
         pm_opcode = get_config("pm_opcode", None)
         if pm_opcode is None:
             log.info("[STEPS] PM: pm_opcode is null — skipping opcode selection")
@@ -456,7 +473,7 @@ async def select_opcode(page: Page, type: str) -> None:
         )
         log.info("[STEPS] OpCode '%s' selected — 'Create Work Item' button visible", opcode_label)
     except Exception as exc:
-        raise RuntimeError(f"[STEPS] select_opcode failed for type={type}: {exc}") from exc
+        raise RuntimeError(f"[STEPS] select_opcode failed for complaint_type={complaint_type}: {exc}") from exc
 
 
 async def create_work_item(page: Page) -> None:
@@ -506,37 +523,51 @@ async def confirm_completion(page: Page) -> None:
 
 # ─── Close / Resolve Work Item ────────────────────────────────────────────────
 
-async def open_glass_work_item_tile(page: Page, mva: str, type: str = "Glass") -> None:
-    """Click the 'Open' title bar on the matching work item tile to expand the detail card."""
-    log.info("[STEPS] %s — opening %s work item tile", mva, type)
-    pattern = COMPLAINT_TYPE_PATTERNS.get(type, _GLASS_PATTERN)
+async def open_work_item_tile(page: Page, mva: str, complaint_type: str = "Glass") -> None:
+    """Click the matching open work item tile and verify details are shown."""
+    log.info("[STEPS] %s — opening %s work item tile", mva, complaint_type)
+    pattern = COMPLAINT_TYPE_PATTERNS.get(complaint_type, _GLASS_PATTERN)
     try:
-        tile = page.locator(
+        open_tiles = page.locator(
             "div[class*='fleet-operations-pwa__scan-record__']"
         ).filter(
-            has_text=pattern
-        ).filter(
             has_text=re.compile(r"open", re.I)
-        ).first
-        await tile.wait_for(state="visible", timeout=10_000)
-        await page.wait_for_timeout(BUTTON_PUSH_DELAY_MS)
-        await tile.locator("text=Open").first.click(timeout=8_000)
-        # Verify card expanded — "Mark Complete" button must become visible
-        await page.get_by_role("button", name="Mark Complete").wait_for(
-            state="visible", timeout=15_000
         )
-        log.info("[STEPS] %s — %s work item tile opened", mva, type)
+
+        count = await open_tiles.count()
+        if count == 0:
+            raise RuntimeError(f"[STEPS] {mva} — no open work item tiles found")
+
+        for idx in range(count):
+            tile = open_tiles.nth(idx)
+            tile_text = (await tile.inner_text()).strip()
+            if not _tile_matches_complaint_type(tile_text, pattern):
+                continue
+
+            await tile.wait_for(state="visible", timeout=10_000)
+            await page.wait_for_timeout(BUTTON_PUSH_DELAY_MS)
+            await tile.locator("text=Open").first.click(timeout=8_000)
+            await page.get_by_role("button", name="Mark Complete").wait_for(
+                state="visible", timeout=15_000
+            )
+            log.info("[STEPS] %s — %s work item tile opened", mva, complaint_type)
+            return
+
+        raise RuntimeError(f"[STEPS] {mva} — no open {complaint_type} tile matched complaints row")
     except Exception as exc:
-        raise RuntimeError(f"[STEPS] open_glass_work_item_tile failed for {mva}: {exc}") from exc
+        raise RuntimeError(f"[STEPS] open_work_item_tile failed for {mva}: {exc}") from exc
 
 
-async def complete_glass_work_item(page: Page, mva: str, note: str = "Done", type: str = "Glass") -> None:
-    """Click 'Mark Complete', fill 'Enter Correction', click 'Complete Work Item'.
+async def open_glass_work_item_tile(page: Page, mva: str, complaint_type: str = "Glass", **kwargs) -> None:
+    """Backward-compatible wrapper for open_work_item_tile()."""
+    legacy_type = kwargs.get("type")
+    await open_work_item_tile(page, mva, complaint_type=legacy_type or complaint_type)
 
-    Verifies success by waiting for the tile status to change from 'Open' to 'Complete'.
-    """
-    log.info("[STEPS] %s — marking %s work item complete", mva, type)
-    pattern = COMPLAINT_TYPE_PATTERNS.get(type, _GLASS_PATTERN)
+
+async def complete_work_item(page: Page, mva: str, note: str = "Done", complaint_type: str = "Glass") -> None:
+    """Click 'Mark Complete', fill correction, and complete the selected work item."""
+    log.info("[STEPS] %s — marking %s work item complete", mva, complaint_type)
+    pattern = COMPLAINT_TYPE_PATTERNS.get(complaint_type, _GLASS_PATTERN)
     try:
         await page.wait_for_timeout(BUTTON_PUSH_DELAY_MS)
         await page.get_by_role("button", name="Mark Complete").click(timeout=10_000)
@@ -553,7 +584,6 @@ async def complete_glass_work_item(page: Page, mva: str, note: str = "Done", typ
         await page.wait_for_timeout(BUTTON_PUSH_DELAY_MS)
         await page.get_by_role("button", name="Complete Work Item").click(timeout=10_000)
 
-        # Verify the tile now shows "Complete" instead of "Open"
         await page.locator(
             "div[class*='fleet-operations-pwa__scan-record__']"
         ).filter(
@@ -562,6 +592,12 @@ async def complete_glass_work_item(page: Page, mva: str, note: str = "Done", typ
             has_text=re.compile(r"complete", re.I)
         ).first.wait_for(state="visible", timeout=20_000)
 
-        log.info("[STEPS] %s — %s work item marked complete", mva, type)
+        log.info("[STEPS] %s — %s work item marked complete", mva, complaint_type)
     except Exception as exc:
-        raise RuntimeError(f"[STEPS] complete_glass_work_item failed for {mva}: {exc}") from exc
+        raise RuntimeError(f"[STEPS] complete_work_item failed for {mva}: {exc}") from exc
+
+
+async def complete_glass_work_item(page: Page, mva: str, note: str = "Done", complaint_type: str = "Glass", **kwargs) -> None:
+    """Backward-compatible wrapper for complete_work_item()."""
+    legacy_type = kwargs.get("type")
+    await complete_work_item(page, mva, note=note, complaint_type=legacy_type or complaint_type)

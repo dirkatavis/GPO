@@ -59,7 +59,7 @@ from playwright_prototype.steps import (
 def _is_edge_running() -> bool:
     result = subprocess.run(
         ["tasklist", "/FI", "IMAGENAME eq msedge.exe", "/NH"],
-        capture_output=True, text=True,
+        capture_output=True, text=True, check=False,
     )
     return "msedge.exe" in result.stdout
 
@@ -141,19 +141,26 @@ def _build_create_targets(args) -> list[dict]:
     return targets
 
 
-async def process_mva(page, mva: str, type: str, location: str, action: str, step_delay_ms: int = 0) -> None:
+async def process_mva(page, mva: str, complaint_type: str, location: str, action: str, step_delay_ms: int = 0) -> None:
     """Run the full work-item creation flow for a single MVA."""
     async def delay():
         if step_delay_ms:
             await page.wait_for_timeout(step_delay_ms)
 
-    await pw_navigate_to_mva(page, mva);                                              await delay()
-    await check_existing_work_item(page, mva, type);                                  await delay()
-    await click_add_work_item(page, mva);                                             await delay()
-    await handle_complaint_dialog(page, mva, type, location, action, step_delay_ms);  await delay()
-    await complete_mileage_dialog(page, mva);                                         await delay()
-    await select_opcode(page, type);                                                   await delay()
-    await create_work_item(page);                                                      await delay()
+    await pw_navigate_to_mva(page, mva)
+    await delay()
+    await check_existing_work_item(page, mva, complaint_type)
+    await delay()
+    await click_add_work_item(page, mva)
+    await delay()
+    await handle_complaint_dialog(page, mva, complaint_type, location, action, step_delay_ms)
+    await delay()
+    await complete_mileage_dialog(page, mva)
+    await delay()
+    await select_opcode(page, complaint_type)
+    await delay()
+    await create_work_item(page)
+    await delay()
     await confirm_completion(page)
 
 
@@ -176,7 +183,7 @@ async def _run_playwright_creation_async(targets: list[dict]) -> None:
 
     if _is_edge_running():
         log.warning("[CREATE] Edge processes detected — killing residual processes before launch...")
-        subprocess.run(["taskkill", "/F", "/IM", "msedge.exe", "/T"], capture_output=True, text=True)
+        subprocess.run(["taskkill", "/F", "/IM", "msedge.exe", "/T"], capture_output=True, text=True, check=False)
         time.sleep(2)
         if _is_edge_running():
             log.error("[CREATE] Edge is still running after kill attempt. Close all Edge windows and retry.")
@@ -220,8 +227,14 @@ async def _run_playwright_creation_async(targets: list[dict]) -> None:
                         mva, work_type, location or "—", action or "—",
                     )
                     try:
-                        await process_mva(page, mva, type=work_type, location=location,
-                                          action=action, step_delay_ms=step_delay_ms)
+                        await process_mva(
+                            page,
+                            mva,
+                            complaint_type=work_type,
+                            location=location,
+                            action=action,
+                            step_delay_ms=step_delay_ms,
+                        )
                     except ExistingWorkItemError:
                         log.info("[CREATE] %s — SKIP: existing %s work item found", mva, work_type)
                         skipped_count += 1
@@ -254,7 +267,7 @@ async def _run_playwright_creation_async(targets: list[dict]) -> None:
         sys.exit(1)
 
 
-def _selenium_create(targets: list[dict]) -> None:
+def _selenium_create(_targets: list[dict]) -> None:
     log.error("[CREATE] Selenium backend for batch create not yet implemented")
     sys.exit(1)
 

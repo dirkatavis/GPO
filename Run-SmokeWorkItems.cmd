@@ -66,7 +66,7 @@ rem  Default CSV path — override by passing a path as first argument:
 rem    Run-SmokeWorkItems.cmd "data\my_mvas.csv"
 rem
 rem  To create work items (writes to Compass), pass --create as second arg:
-rem    Run-SmokeWorkItems.cmd "playwright_prototype\sample_mvas.csv" --create
+rem    Run-SmokeWorkItems.cmd "WorkItems\create_workitem.csv" --create
 rem ---------------------------------------------------------------------------
 
 set "CSV_PATH=WorkItems\create_workitem.csv"
@@ -89,14 +89,17 @@ if not exist "%CSV_PATH%" (
 
 echo Running smoke test against: %CSV_PATH%
 if defined CREATE_FLAG (
-  echo Mode: CHECK + CREATE
+  echo Mode: CREATE
 ) else (
   echo Mode: CHECK ONLY ^(read-only^)
 )
 
 set "GLASS_AGENTIC=1"
-set "GLASS_EDGE_NO_PROFILE=1"
-"%VENV_PY%" WorkItems\create_workitem.py --csv "%CSV_PATH%" %CREATE_FLAG%
+if defined CREATE_FLAG (
+  "%VENV_PY%" WorkItems\create_workitem.py --csv "%CSV_PATH%"
+) else (
+  "%VENV_PY%" WorkItems\verify_workitem.py --csv "%CSV_PATH%" --no-pause
+)
 
 echo.
 echo Exit code: %errorlevel%

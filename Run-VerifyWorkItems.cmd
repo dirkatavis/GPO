@@ -96,7 +96,6 @@ taskkill /F /IM msedge.exe /T 2>nul
 timeout /t 2 /nobreak >nul
 
 set "GLASS_AGENTIC=1"
-set "GLASS_EDGE_NO_PROFILE=1"
 "%VENV_PY%" WorkItems\verify_workitem.py --csv "%CSV_PATH%" --type "%TYPE_FILTER%" --no-pause
 
 echo.
