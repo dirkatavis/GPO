@@ -1,0 +1,16 @@
+# create_workitem.csv — input for WorkItems/create_workitem.py
+# (close_workitem.csv uses the same schema)
+#
+# Columns:
+#   mva      — MVA number (required)
+#   Type     — Work item type: Glass, PM               (required; defaults to Glass if omitted)
+#   location — Glass only: glass area code             (required for Glass, e.g. WS, BW, FLD)
+#   action   — Glass/WS only: Replace or Repair        (defaults to Replace if omitted)
+#
+# Notes:
+#   - Repair is only valid for windshields (location=WS)
+#   - Non-WS glass locations always map to Side/Rear Window Damage regardless of action
+#   - PM rows leave location and action blank
+#   - Lines starting with # are ignored
+#
+mva,Type,location,action

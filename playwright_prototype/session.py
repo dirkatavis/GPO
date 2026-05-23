@@ -136,6 +136,11 @@ async def _advance_existing_session_page(page: Page) -> Page:
     if not current_url or current_url == "about:blank":
         log.info("[SESSION] Existing session page blank — opening Foundry home URL")
         await page.goto(FOUNDRY_HOME_URL, wait_until="domcontentloaded")
+        current_url = (page.url or "").lower()
+
+    if current_url and not current_url.startswith(LOGIN_URL.lower()):
+        log.info("[SESSION] Existing session page not on login URL — opening login URL: %s", LOGIN_URL)
+        await page.goto(LOGIN_URL, wait_until="domcontentloaded")
 
     if await _is_on_login_page(page):
         log.info("[SESSION] Existing session page is on login form — running full login fallback")
@@ -158,13 +163,20 @@ async def _advance_existing_session_page(page: Page) -> Page:
         log.info("[SESSION] Moving from Microsoft auth page to Foundry home URL")
         await page.goto(FOUNDRY_HOME_URL, wait_until="domcontentloaded")
 
-    if await _is_on_compass_app_page(page):
+    on_compass_app = await _is_on_compass_app_page(page)
+    if on_compass_app:
         log.info("[SESSION] Already on Compass app page from existing session")
-    elif await _is_on_compass_mobile_picker(page):
-        log.info("[SESSION] Existing session page on Compass picker — opening Compass Mobile")
-        page = await click_compass_mobile_tile(page)
-        # Give the new tab time to render the WWID form before probing.
-        await page.wait_for_timeout(3_000)
+    else:
+        if await _is_on_compass_mobile_picker(page):
+            log.info("[SESSION] Existing session page on Compass picker — opening Compass Mobile")
+            page = await click_compass_mobile_tile(page)
+            # Give the new tab time to render the WWID form before probing.
+            await page.wait_for_timeout(3_000)
+
+        # Fail fast on unknown landings by steering to the configured health/login URL.
+        if not await _is_on_wwid_screen(page):
+            log.info("[SESSION] Existing session page unknown — opening login URL: %s", LOGIN_URL)
+            await page.goto(LOGIN_URL, wait_until="domcontentloaded")
 
     if await _is_on_wwid_screen(page):
         log.info("[SESSION] Existing session page on WWID screen — submitting login ID")

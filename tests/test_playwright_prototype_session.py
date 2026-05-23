@@ -98,3 +98,27 @@ class TestStorageStateDetection:
         # new_context must have been called WITHOUT a storage_state keyword argument
         call_kwargs = browser.new_context.call_args_list[0].kwargs
         assert "storage_state" not in call_kwargs
+
+    def test_unknown_page_is_redirected_to_login_url(self, tmp_path, monkeypatch):
+        """A stale workspace/module page should be steered to the configured login URL."""
+        state_file = tmp_path / "storage_state.json"
+        state_file.write_text("{}", encoding="utf-8")
+
+        context, page = _make_context_and_page_mocks("/workspace/module/view/latest/ri.workshop.main.module.d62ba12c-018c-41c1-8214-0749f6591b30")
+        browser = _make_browser_mock(context)
+
+        monkeypatch.setattr("playwright_prototype.session.STORAGE_STATE_PATH", state_file)
+        monkeypatch.setattr("playwright_prototype.session.LOGIN_URL", "https://avisbudget.palantirfoundry.com/workspace/fleet-operations-pwa/health")
+        monkeypatch.setattr("playwright_prototype.session.perform_full_login", AsyncMock(return_value=page))
+        monkeypatch.setenv("GLASS_LOGIN_USERNAME", "user@example.com")
+        monkeypatch.setenv("GLASS_LOGIN_PASSWORD", "secret")
+        monkeypatch.setenv("GLASS_LOGIN_ID", "E12345")
+
+        async def run():
+            from playwright_prototype.session import ensure_authenticated_context
+            return await ensure_authenticated_context(browser)
+
+        asyncio.run(run())
+
+        assert page.goto.call_args_list
+        assert page.goto.call_args_list[0].args[0] == "https://avisbudget.palantirfoundry.com/workspace/fleet-operations-pwa/health"

@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 import argparse
 import asyncio
 import csv
 import os
 import re
 import subprocess
-import sys
 import time
 from typing import TYPE_CHECKING
 
@@ -27,6 +30,7 @@ from playwright_prototype.session import ensure_profile_context
 from playwright_prototype.steps import warmup_compass as pw_warmup_compass
 from playwright_prototype.steps import navigate_to_mva as pw_navigate_to_mva
 from playwright_prototype.steps import open_glass_work_item_tile, complete_glass_work_item
+from playwright_prototype.steps import COMPLAINT_TYPE_PATTERNS
 
 if TYPE_CHECKING:
     from playwright.async_api import Page
@@ -37,14 +41,6 @@ RESULT_NOT_FOUND = "not_found"
 RESULT_NAV_FAILED = "nav_failed"
 RESULT_ERROR = "error"
 RESULT_TIMEOUT = "timeout"
-
-_GLASS_PATTERN = re.compile(r"glass|windshield|crack|chip|window", re.I)
-_PM_PATTERN = re.compile(r"PM", re.I)
-
-COMPLAINT_TYPE_PATTERNS = {
-    "Glass": _GLASS_PATTERN,
-    "PM": _PM_PATTERN,
-}
 
 
 def _is_edge_running() -> bool:
@@ -78,7 +74,7 @@ def _load_csv(path: str) -> list[dict]:
         log.error("[CLOSE] CSV file not found: %s", path)
         sys.exit(1)
     with open(path, newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
+        reader = csv.DictReader(line for line in f if not line.startswith("#"))
         if not reader.fieldnames or "mva" not in reader.fieldnames:
             log.error("[CLOSE] CSV missing required 'mva' column: %s", path)
             sys.exit(1)
@@ -87,38 +83,38 @@ def _load_csv(path: str) -> list[dict]:
 
 def _build_targets(args: argparse.Namespace) -> list[dict]:
     """Build list of (mva, complaint_type) targets from CLI args.
-    
+
     Returns list of dicts with 'mva' and 'complaint_type' keys.
     """
     if args.csv_path:
         rows = _load_csv(args.csv_path)
         targets = []
         valid_types = _get_valid_complaint_types()
-        
+
         for i, row in enumerate(rows, start=2):
             mva = row.get("mva", "").strip()
             if not mva:
                 log.warning("[CLOSE] Row %d: empty MVA, skipping", i)
                 continue
-            
+
             complaint_type = row.get("Type", "").strip()
             if not complaint_type:
                 log.error("[CLOSE] Row %d: missing 'Type' column for MVA %s", i, mva)
                 sys.exit(1)
-            
+
             if complaint_type not in valid_types:
                 log.error("[CLOSE] Row %d: invalid Type '%s' for MVA %s — must be one of: %s",
                          i, complaint_type, mva, ", ".join(valid_types))
                 sys.exit(1)
-            
+
             targets.append({"mva": mva, "complaint_type": complaint_type})
-        
+
         if not targets:
             log.error("[CLOSE] No valid MVAs found in %s", args.csv_path)
             sys.exit(1)
         log.info("[CLOSE] Loaded %d MVA(s) from %s", len(targets), args.csv_path)
         return targets
-    
+
     return [{"mva": args.mva.strip(), "complaint_type": args.complaint_type or "Glass"}]
 
 
@@ -136,13 +132,13 @@ async def _capture_playwright_screenshot(page: "Page", label: str, mva: str) -> 
 
 async def _playwright_close_work_item(page: "Page", mva: str, complaint_type: str) -> tuple[str, str]:
     """Find the open work item tile of the specified type, expand it, and mark it complete.
-    
+
     Verifies the tile's actual complaint type matches the expected type before attempting close.
 
     Returns (result_constant, tile_detail_text).
     """
-    pattern = COMPLAINT_TYPE_PATTERNS.get(complaint_type, _GLASS_PATTERN)
-    
+    pattern = COMPLAINT_TYPE_PATTERNS.get(complaint_type, COMPLAINT_TYPE_PATTERNS["Glass"])
+
     tiles = page.locator("div[class*='fleet-operations-pwa__scan-record__']").filter(
         has=page.locator("[class*='fleet-operations-pwa__scan-record-header-title-right__']",
                          has_text=re.compile(r"^open$", re.I))
@@ -181,7 +177,7 @@ async def _playwright_close_work_item(page: "Page", mva: str, complaint_type: st
 
 async def _run_playwright_close_async(args: argparse.Namespace, targets: list[dict]) -> list[dict]:
     """Playwright close backend.
-    
+
     Args:
         args: argparse.Namespace with timeout_seconds
         targets: list of dicts with 'mva' and 'complaint_type' keys
@@ -247,8 +243,10 @@ async def _run_playwright_close_async(args: argparse.Namespace, targets: list[di
             for target in targets:
                 mva = target["mva"]
                 complaint_type = target["complaint_type"]
-                
-                log.info("[CLOSE] Settling UI before closing MVA %s (Type: %s, polling every 1s, 10s timeout)...", mva, complaint_type)
+
+                log.info("[CLOSE] %s", "-" * 40)
+                log.info("[CLOSE] MVA %s  |  type=%s", mva, complaint_type)
+                log.info("[CLOSE] Settling UI (polling every 1s, 10s timeout)...")
                 settle_start = time.monotonic()
                 settle_timeout = 10.0
                 while (time.monotonic() - settle_start) < settle_timeout:

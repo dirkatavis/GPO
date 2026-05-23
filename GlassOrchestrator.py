@@ -950,6 +950,9 @@ def persist_new_rows(df: pd.DataFrame) -> pd.DataFrame:
     all_vals = ws.get_all_values()
 
     # No deduplication: all rows are always written
+    # Carry forward the earliest Original Date from the sheet for any returning MVA
+    df = _resolve_original_dates(all_vals, df)
+
     # Find the insertion point: first empty row after last data row (column B = MVA)
     insert_row = _find_insert_row(all_vals)
 
@@ -1108,6 +1111,77 @@ def _rows_from_dataframe(df: pd.DataFrame) -> list[list[str]]:
             values.append(val)
         rows.append(values)
     return rows
+
+
+def _resolve_original_dates(all_vals: list[list[str]], df: pd.DataFrame) -> pd.DataFrame:
+    """Carry forward the earliest Original Date from the sheet for returning MVAs.
+
+    Only sheet rows whose Inventory Date falls within INCIDENT_WINDOW_DAYS of
+    the new row's Inventory Date are considered.  This keeps the Original Date
+    scoped to the current repair incident — rows from weeks or months ago are
+    ignored.
+
+    If no qualifying prior rows exist for an MVA, its Original Date is left
+    unchanged (i.e. the Inventory Date from the current email).
+    """
+    if not all_vals or len(all_vals) < 2:
+        return df
+
+    headers = all_vals[0]
+    try:
+        mva_idx = headers.index("MVA")
+        inv_idx = headers.index("Inventory Date")
+        original_idx = headers.index("Original Date")
+    except ValueError:
+        return df
+
+    # Pre-parse all sheet rows into (mva, inventory_date, original_date) tuples.
+    # Legacy rows may have blank Original Date; in that case use Inventory Date
+    # so earlier incidents can still anchor carry-forward logic.
+    sheet_rows: list[tuple[str, date, date]] = []
+    for row in all_vals[1:]:
+        if len(row) <= max(mva_idx, inv_idx, original_idx):
+            continue
+        mva = row[mva_idx].strip()
+        raw_inv = row[inv_idx].strip()
+        raw_orig = row[original_idx].strip()
+        if not mva or not raw_inv:
+            continue
+        inv_date = _parse_key_date(raw_inv)
+        if inv_date is None:
+            continue
+        orig_date = _parse_key_date(raw_orig) if raw_orig else inv_date
+        if orig_date is None:
+            orig_date = inv_date
+        sheet_rows.append((mva, inv_date, orig_date))
+
+    if not sheet_rows:
+        return df
+
+    df = df.copy()
+    for idx, row in df.iterrows():
+        mva = str(row["MVA"]).strip()
+        new_inv = _parse_key_date(str(row["Inventory Date"]))
+        if new_inv is None:
+            continue
+
+        # Collect Original Dates from prior rows within the incident window
+        candidates = [
+            orig
+            for (s_mva, s_inv, orig) in sheet_rows
+            if s_mva == mva and 0 <= (new_inv - s_inv).days <= INCIDENT_WINDOW_DAYS
+        ]
+        if not candidates:
+            continue
+
+        earliest = min(candidates)
+        df.at[idx, "Original Date"] = earliest.strftime("%m/%d/%Y")
+        log.info(
+            "Persistence: %s — Original Date carried forward from sheet: %s",
+            mva,
+            earliest.strftime("%m/%d/%Y"),
+        )
+    return df
 
 
 def _load_existing_keys(all_vals: list[list[str]]) -> set[str]:

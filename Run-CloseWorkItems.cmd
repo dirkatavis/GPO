@@ -73,7 +73,7 @@ rem    0 = all MVAs had their glass work item successfully closed
 rem    1 = one or more MVAs had no open work item or failed
 rem ---------------------------------------------------------------------------
 
-set "CSV_PATH=playwright_prototype\sample_mvas.csv"
+set "CSV_PATH=WorkItems\close_workitem.csv"
 
 if not "%~1"=="" set "CSV_PATH=%~1"
 
@@ -83,15 +83,10 @@ if not exist "%CSV_PATH%" (
   exit /b 1
 )
 
-echo Closing glass work items in: %CSV_PATH%
-
-echo [PRE-LAUNCH] Terminating any running Edge instances...
-taskkill /F /IM msedge.exe /T 2>nul
-timeout /t 2 /nobreak >nul
+echo Closing work items in: %CSV_PATH%
 
 set "GLASS_AGENTIC=1"
-set "GLASS_EDGE_NO_PROFILE=1"
-"%VENV_PY%" close_workitem.py --csv "%CSV_PATH%" --no-pause
+"%VENV_PY%" WorkItems\close_workitem.py --csv "%CSV_PATH%" --no-pause
 
 echo.
 echo Exit code: %errorlevel%

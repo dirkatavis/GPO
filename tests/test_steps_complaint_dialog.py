@@ -78,7 +78,7 @@ class TestHandleComplaintDialogExistingPath:
         from playwright_prototype.steps import handle_complaint_dialog
 
         page, tile_first, next_btn, _ = _make_page_mock()
-        asyncio.run(handle_complaint_dialog(page, "59002156", "WS", "Replace"))
+        asyncio.run(handle_complaint_dialog(page, "59002156", "Glass", "WS", "Replace"))
 
         tile_first.click.assert_called_once()
 
@@ -87,7 +87,7 @@ class TestHandleComplaintDialogExistingPath:
         from playwright_prototype.steps import handle_complaint_dialog
 
         page, tile_first, next_btn, _ = _make_page_mock()
-        asyncio.run(handle_complaint_dialog(page, "59002156", "WS", "Replace"))
+        asyncio.run(handle_complaint_dialog(page, "59002156", "Glass", "WS", "Replace"))
 
         next_btn.click.assert_called_once()
 
@@ -96,7 +96,7 @@ class TestHandleComplaintDialogExistingPath:
         from playwright_prototype.steps import handle_complaint_dialog
 
         page, _, _, add_new_btn_first = _make_page_mock()
-        asyncio.run(handle_complaint_dialog(page, "59002156", "WS", "Replace"))
+        asyncio.run(handle_complaint_dialog(page, "59002156", "Glass", "WS", "Replace"))
 
         add_new_btn_first.click.assert_not_called()
 
@@ -105,7 +105,7 @@ class TestHandleComplaintDialogExistingPath:
         from playwright_prototype.steps import handle_complaint_dialog
 
         page, _, _, _ = _make_page_mock()
-        asyncio.run(handle_complaint_dialog(page, "59002156", "WS", "Replace"))
+        asyncio.run(handle_complaint_dialog(page, "59002156", "Glass", "WS", "Replace"))
 
 
 class TestMapDamageType:
@@ -191,7 +191,7 @@ class TestHandleComplaintDialogNewPathDamageType:
 
         with patch("playwright_prototype.steps._click_submit_complaint", new=AsyncMock()), \
              patch("playwright_prototype.steps._wait_for_post_submit_progress", new=AsyncMock(return_value=True)):
-            asyncio.run(handle_complaint_dialog(page, "99999999", "RW", "Replace"))
+            asyncio.run(handle_complaint_dialog(page, "99999999", "Glass", "RW", "Replace"))
 
         damage_selectors = [s for s in locator_calls if "Side/Rear Window Damage" in str(s)]
         assert damage_selectors, (
@@ -206,9 +206,39 @@ class TestHandleComplaintDialogNewPathDamageType:
 
         with patch("playwright_prototype.steps._click_submit_complaint", new=AsyncMock()), \
              patch("playwright_prototype.steps._wait_for_post_submit_progress", new=AsyncMock(return_value=True)):
-            asyncio.run(handle_complaint_dialog(page, "99999999", "WS", "Repair"))
+            asyncio.run(handle_complaint_dialog(page, "99999999", "Glass", "WS", "Repair"))
 
         damage_selectors = [s for s in locator_calls if "Windshield Chip" in str(s)]
         assert damage_selectors, (
             f"Expected XPath selector containing 'Windshield Chip' but got: {locator_calls}"
         )
+
+
+class TestComplaintTypePatterns:
+    """COMPLAINT_TYPE_PATTERNS in steps.py matches the correct tile text."""
+
+    def test_glass_pattern_matches_glass(self):
+        from playwright_prototype.steps import COMPLAINT_TYPE_PATTERNS
+        assert COMPLAINT_TYPE_PATTERNS["Glass"].search("Glass Damage")
+
+    def test_glass_pattern_matches_windshield(self):
+        from playwright_prototype.steps import COMPLAINT_TYPE_PATTERNS
+        assert COMPLAINT_TYPE_PATTERNS["Glass"].search("Windshield Crack")
+
+    def test_pm_pattern_matches_pm(self):
+        from playwright_prototype.steps import COMPLAINT_TYPE_PATTERNS
+        assert COMPLAINT_TYPE_PATTERNS["PM"].search("PM Gas")
+
+    def test_glass_pattern_does_not_match_pm(self):
+        from playwright_prototype.steps import COMPLAINT_TYPE_PATTERNS
+        assert not COMPLAINT_TYPE_PATTERNS["Glass"].search("PM preventive maintenance")
+
+    def test_check_existing_work_item_importable(self):
+        """Renamed function must be importable from steps."""
+        from playwright_prototype.steps import check_existing_work_item
+        assert callable(check_existing_work_item)
+
+    def test_select_opcode_importable(self):
+        """Renamed function must be importable from steps."""
+        from playwright_prototype.steps import select_opcode
+        assert callable(select_opcode)

@@ -15,7 +15,10 @@
 	
 	"glass_opcode_fallback_comment": "Fallback opcode if primary is unavailable. Used when 'Glass Repair/Replace' is not selectable.",
 	"glass_opcode_fallback": "Glass",
-	
+
+	"pm_opcode_comment": "Opcode name for PM work items. Set to null to skip opcode selection for PM.",
+	"pm_opcode": "PM Gas",
+
 	"completion_note_comment": "Text appended to work item notes when marking as complete. Examples: 'Done', 'Completed', 'Closed'.",
 	"completion_note": "Done",
 	
@@ -31,6 +34,12 @@
 	"mva_entry_delay_seconds_comment": "Wait time (seconds) when entering MVA codes. Increase if OCR or data entry is slow.",
 	"mva_entry_delay_seconds": 30,
 	
+	"valid_complaint_types_comment": "Supported complaint/work item types for close operations. Add new types as they become available (e.g. 'Dent', 'Accident Repair'). Must match exactly in CSV Type column.",
+	"valid_complaint_types": ["Glass", "PM"],
+
+	"duplicate_window_days_comment": "Number of days within which an existing open work item is considered a duplicate. 0 disables the window check (any open item is a dup).",
+	"duplicate_window_days": 5,
+
 	"logging_comment": "Logging configuration. level: DEBUG (verbose), INFO (normal), ERROR (errors only). format: log message template.",
 	"logging": {
 		"level": "DEBUG",

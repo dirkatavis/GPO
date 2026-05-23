@@ -68,16 +68,17 @@ rem  Usage:
 rem    Run-CreateWorkItems.cmd                        -- uses data\workitems_today.csv
 rem    Run-CreateWorkItems.cmd "data\my_mvas.csv"     -- custom CSV
 rem
-rem  CSV format: mva,location,action
-rem    location defaults to WS if omitted
-rem    action defaults to Replace if omitted (use Repair for r-suffix MVAs)
+rem  CSV format: mva,Type,location,action
+rem    Type: Glass or PM (defaults to Glass if omitted)
+rem    location required for Glass rows (e.g. WS, BW, FLD)
+rem    action required when Type=Glass and location=WS (Replace or Repair)
 rem
 rem  Exit code:
 rem    0 = all MVAs created or skipped (existing work item found)
 rem    1 = one or more MVAs failed
 rem ---------------------------------------------------------------------------
 
-set "CSV_PATH=playwright_prototype\sample_mvas.csv"
+set "CSV_PATH=WorkItems\create_workitem.csv"
 
 if not "%~1"=="" set "CSV_PATH=%~1"
 
@@ -87,15 +88,10 @@ if not exist "%CSV_PATH%" (
   exit /b 1
 )
 
-echo Creating glass work items from: %CSV_PATH%
-
-echo [PRE-LAUNCH] Terminating any running Edge instances...
-taskkill /F /IM msedge.exe /T 2>nul
-timeout /t 2 /nobreak >nul
+echo Creating work items from: %CSV_PATH%
 
 set "GLASS_AGENTIC=1"
-set "GLASS_EDGE_NO_PROFILE=1"
-"%VENV_PY%" create_workitem.py --csv "%CSV_PATH%" --backend playwright
+"%VENV_PY%" WorkItems\create_workitem.py --csv "%CSV_PATH%" --backend playwright
 
 echo.
 echo Exit code: %errorlevel%
