@@ -236,7 +236,7 @@ async def _run_playwright_creation_async(targets: list[dict]) -> None:
                             step_delay_ms=step_delay_ms,
                         )
                     except ExistingWorkItemError:
-                        log.info("[CREATE] %s — SKIP: existing %s work item found", mva, work_type)
+                        log.info("[CREATE] %s — Existing work item detected. Skipping.", mva)
                         skipped_count += 1
                         continue
 

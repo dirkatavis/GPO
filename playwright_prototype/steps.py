@@ -228,15 +228,16 @@ def _tile_matches_complaint_type(tile_text: str, pattern: re.Pattern) -> bool:
 
 
 async def check_existing_work_item(page: Page, mva: str, complaint_type: str) -> None:
-    """Raise ExistingWorkItemError if a recent open work item of the given type already exists.
+    """Raise ExistingWorkItemError when a same-type existing work item should block creation.
 
-    Uses COMPLAINT_TYPE_PATTERNS[type] to match tiles. Only raises if the tile's
-    Created At date is within duplicate_window_days of today (default 5). Tiles older
-    than the window are ignored. If Created At is missing, the tile is treated as recent.
+    Decision rules:
+    - Any open same-type work item blocks creation, regardless of age.
+    - Otherwise, a same-type work item created within duplicate_window_days blocks creation.
+    - If Created At is missing for a same-type tile, treat as duplicate to avoid false creates.
     """
     pattern = COMPLAINT_TYPE_PATTERNS.get(complaint_type, _GLASS_PATTERN)
     window_days = int(get_config("duplicate_window_days", 5))
-    log.info("[STEPS] %s — checking for existing open %s work item (window=%d days)", mva, complaint_type, window_days)
+    log.info("[STEPS] %s — checking for existing %s work item (window=%d days)", mva, complaint_type, window_days)
     try:
         container = page.locator('[class*="fleet-operations-pwa__scan-record__"]').first
         try:
@@ -245,28 +246,33 @@ async def check_existing_work_item(page: Page, mva: str, complaint_type: str) ->
             log.info("[STEPS] %s — no work items container found, safe to proceed", mva)
             return
 
-        open_tiles = page.locator(
-            '[class*="fleet-operations-pwa__scan-record__"]'
-        ).filter(has_text=re.compile(r"open", re.I))
-        count = await open_tiles.count()
+        all_tiles = page.locator('[class*="fleet-operations-pwa__scan-record__"]')
+        count = await all_tiles.count()
         today = datetime.date.today()
         for idx in range(count):
-            tile_text = await open_tiles.nth(idx).inner_text()
+            tile_text = await all_tiles.nth(idx).inner_text()
             if not _tile_matches_complaint_type(tile_text, pattern):
                 continue
+
+            if re.search(r"^\s*open\b", tile_text, re.I | re.M):
+                raise ExistingWorkItemError(
+                    f"{mva} — open {complaint_type} work item already exists: {tile_text.strip()!r}"
+                )
+
             created_at = _parse_tile_created_at(tile_text)
             if created_at is None:
-                log.warning("[STEPS] %s — open %s tile has no Created At; treating as recent dup", mva, complaint_type)
+                log.warning("[STEPS] %s — %s tile has no Created At; treating as duplicate", mva, complaint_type)
                 raise ExistingWorkItemError(
-                    f"{mva} — open {complaint_type} work item already exists (no date): {tile_text.strip()!r}"
+                    f"{mva} — {complaint_type} work item already exists (no date): {tile_text.strip()!r}"
                 )
+
             age_days = (today - created_at).days
             if window_days == 0 or age_days <= window_days:
                 raise ExistingWorkItemError(
-                    f"{mva} — open {complaint_type} work item already exists (created {age_days}d ago): {tile_text.strip()!r}"
+                    f"{mva} — {complaint_type} work item already exists (created {age_days}d ago): {tile_text.strip()!r}"
                 )
-            log.info("[STEPS] %s — open %s tile found but is %d days old (> window %d) — ignoring", mva, complaint_type, age_days, window_days)
-        log.info("[STEPS] %s — no recent open %s work item found, safe to proceed", mva, complaint_type)
+            log.info("[STEPS] %s — %s tile found but is %d days old (> window %d) — ignoring", mva, complaint_type, age_days, window_days)
+        log.info("[STEPS] %s — no blocking %s work item found, safe to proceed", mva, complaint_type)
     except ExistingWorkItemError:
         raise
     except Exception as exc:
