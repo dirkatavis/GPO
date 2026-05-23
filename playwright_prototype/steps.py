@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime
 import logging
 import re
+import time
 from typing import TYPE_CHECKING
 
 from config.config_loader import get_config
@@ -35,6 +36,56 @@ def _map_damage_type(location: str, action: str) -> str:
     if loc in ("WS", "WINDSHIELD", "FRONT"):
         return "Windshield Chip" if act in ("REPAIR", "CHIP") else "Windshield Crack"
     return "Side/Rear Window Damage"
+
+
+def _is_unready_vehicle_value(value: str | None) -> bool:
+    """Return True when a vehicle-property value is not yet populated."""
+    stripped = (value or "").strip()
+    if not stripped:
+        return True
+    return bool(re.fullmatch(r"[-\u2010\u2011\u2012\u2013\u2014\u2015\s]+", stripped))
+
+
+def _normalize_digits(value: str) -> str:
+    """Return only numeric characters from the provided string."""
+    return re.sub(r"\D", "", value or "")
+
+
+async def _wait_for_vehicle_details_ready(page: Page, mva: str, timeout_ms: int = 20_000) -> None:
+    """Wait until the vehicle details panel shows a populated MVA value for the target MVA."""
+    last8 = mva[-8:] if len(mva) >= 8 else mva
+    value_locator = page.locator(
+        "xpath="
+        "//div[contains(@class,'vehicle-properties-container')]"
+        "//div[contains(@class,'vehicle-property__')]"
+        "[div[contains(@class,'vehicle-property-name')][normalize-space()='MVA']]"
+        "/div[contains(@class,'vehicle-property-value')]"
+    ).first
+
+    deadline = time.monotonic() + (timeout_ms / 1000.0)
+    last_seen = ""
+    last_error: Exception | None = None
+
+    while time.monotonic() < deadline:
+        try:
+            raw_value = (await value_locator.inner_text()).strip()
+            last_seen = raw_value
+            last_error = None
+            if not _is_unready_vehicle_value(raw_value):
+                digits = _normalize_digits(raw_value)
+                if last8 in raw_value or last8 in digits:
+                    log.info("[STEPS] %s — vehicle details ready (MVA=%s)", mva, raw_value)
+                    return
+        except Exception as exc:
+            last_error = exc
+            log.debug("[STEPS] %s — readiness probe retry due to locator/read error: %s", mva, exc)
+        await page.wait_for_timeout(400)
+
+    extra = f"; last_error={last_error!r}" if last_error is not None else ""
+    raise RuntimeError(
+        f"[STEPS] {mva} — vehicle details not ready; MVA value stayed empty/hyphen or mismatched"
+        f" (last_seen={last_seen!r}){extra}"
+    )
 
 
 async def _enter_mva(page: Page, mva: str) -> None:
@@ -91,6 +142,10 @@ async def warmup_compass(page: Page) -> None:
         await page.locator("button:not([disabled])").filter(
             has_text="Add Work Item"
         ).wait_for(state="visible", timeout=30_000)
+        try:
+            await _wait_for_vehicle_details_ready(page, dummy_mva, timeout_ms=20_000)
+        except Exception as exc:
+            log.warning("[STEPS] Warm-up: vehicle details not fully confirmed (%s) — proceeding anyway", exc)
         log.info("[STEPS] Compass warm-up complete")
     except Exception:
         log.warning("[STEPS] Warm-up: 'Add Work Item' not confirmed within timeout — proceeding anyway")
@@ -99,9 +154,8 @@ async def warmup_compass(page: Page) -> None:
 async def navigate_to_mva(page: Page, mva: str) -> None:
     """Enter an MVA and wait for the vehicle page to fully load.
 
-    Waits for 'Add Work Item' to be enabled (not just visible) — the button
-    appears immediately in a disabled/loading state while vehicle data fetches,
-    so checking for enabled confirms the page is truly ready.
+    Waits for 'Add Work Item' to be enabled, then confirms the vehicle detail
+    panel has a populated MVA value matching the requested MVA.
     """
     log.info("[STEPS] %s — navigating", mva)
     try:
@@ -131,6 +185,7 @@ async def navigate_to_mva(page: Page, mva: str) -> None:
         await page.locator("button:not([disabled])").filter(
             has_text="Add Work Item"
         ).wait_for(state="visible", timeout=30_000)
+        await _wait_for_vehicle_details_ready(page, mva, timeout_ms=25_000)
         log.info("[STEPS] %s — vehicle page loaded", mva)
     except Exception as exc:
         raise RuntimeError(f"[STEPS] navigate_to_mva failed for {mva}: {exc}") from exc
