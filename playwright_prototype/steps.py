@@ -254,7 +254,7 @@ async def check_existing_work_item(page: Page, mva: str, complaint_type: str) ->
             if not _tile_matches_complaint_type(tile_text, pattern):
                 continue
 
-            if re.search(r"^\s*open\b", tile_text, re.I | re.M):
+            if re.search(r"\bopen\b", tile_text, re.I):
                 raise ExistingWorkItemError(
                     f"{mva} — open {complaint_type} work item already exists: {tile_text.strip()!r}"
                 )

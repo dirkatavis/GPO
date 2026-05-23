@@ -125,6 +125,14 @@ class TestCheckExistingWorkItemDuplicateWindow:
         with pytest.raises(ExistingWorkItemError):
             asyncio.run(steps.check_existing_work_item(page, "12345", "PM"))
 
+    def test_open_in_header_text_still_raises_duplicate(self, monkeypatch):
+        monkeypatch.setattr(steps, "get_config", lambda key, default=None: 5 if key == "duplicate_window_days" else default)
+        tile_date = datetime.date.today() - datetime.timedelta(days=10)
+        page = _FakePage([self._tile_text(tile_date, status="Glass Damage - Open")])
+
+        with pytest.raises(ExistingWorkItemError):
+            asyncio.run(steps.check_existing_work_item(page, "12345", "PM"))
+
     def test_closed_within_window_raises_duplicate(self, monkeypatch):
         monkeypatch.setattr(steps, "get_config", lambda key, default=None: 5 if key == "duplicate_window_days" else default)
         tile_date = datetime.date.today() - datetime.timedelta(days=2)
