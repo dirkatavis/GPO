@@ -101,11 +101,11 @@ class _FakePage:
 
 
 class TestCheckExistingWorkItemDuplicateWindow:
-    def _tile_text(self, date: datetime.date | None, complaints: str = "PM") -> str:
+    def _tile_text(self, date: datetime.date | None, complaints: str = "PM", status: str = "Open") -> str:
         if date is None:
-            return f"Open\nComplaints: {complaints}\nEstimated Labor Time: 0.5"
+            return f"{status}\nComplaints: {complaints}\nEstimated Labor Time: 0.5"
         return (
-            f"Open\nComplaints: {complaints}\n"
+            f"{status}\nComplaints: {complaints}\n"
             f"Created At: {date.month}/{date.day}/{date.year}, 1:39:33 PM\nEstimated Labor Time: 0.5"
         )
 
@@ -117,10 +117,34 @@ class TestCheckExistingWorkItemDuplicateWindow:
         with pytest.raises(ExistingWorkItemError):
             asyncio.run(steps.check_existing_work_item(page, "12345", "PM"))
 
-    def test_beyond_window_does_not_raise(self, monkeypatch):
+    def test_open_beyond_window_still_raises_duplicate(self, monkeypatch):
         monkeypatch.setattr(steps, "get_config", lambda key, default=None: 5 if key == "duplicate_window_days" else default)
         tile_date = datetime.date.today() - datetime.timedelta(days=10)
         page = _FakePage([self._tile_text(tile_date)])
+
+        with pytest.raises(ExistingWorkItemError):
+            asyncio.run(steps.check_existing_work_item(page, "12345", "PM"))
+
+    def test_open_in_header_text_still_raises_duplicate(self, monkeypatch):
+        monkeypatch.setattr(steps, "get_config", lambda key, default=None: 5 if key == "duplicate_window_days" else default)
+        tile_date = datetime.date.today() - datetime.timedelta(days=10)
+        page = _FakePage([self._tile_text(tile_date, status="Glass Damage - Open")])
+
+        with pytest.raises(ExistingWorkItemError):
+            asyncio.run(steps.check_existing_work_item(page, "12345", "PM"))
+
+    def test_closed_within_window_raises_duplicate(self, monkeypatch):
+        monkeypatch.setattr(steps, "get_config", lambda key, default=None: 5 if key == "duplicate_window_days" else default)
+        tile_date = datetime.date.today() - datetime.timedelta(days=2)
+        page = _FakePage([self._tile_text(tile_date, status="Complete")])
+
+        with pytest.raises(ExistingWorkItemError):
+            asyncio.run(steps.check_existing_work_item(page, "12345", "PM"))
+
+    def test_closed_beyond_window_does_not_raise(self, monkeypatch):
+        monkeypatch.setattr(steps, "get_config", lambda key, default=None: 5 if key == "duplicate_window_days" else default)
+        tile_date = datetime.date.today() - datetime.timedelta(days=10)
+        page = _FakePage([self._tile_text(tile_date, status="Complete")])
 
         asyncio.run(steps.check_existing_work_item(page, "12345", "PM"))
 
