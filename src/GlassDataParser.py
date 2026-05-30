@@ -46,6 +46,18 @@ RESULTS_FILE = "GlassResults.txt"
 MVA_CSV = "data/GlassDataParser.csv"
 
 
+def _capture_mva_failure_screenshot(driver, label, mva):
+    """Save a Selenium screenshot to log/ when MVA echo lookup fails."""
+    try:
+        os.makedirs("log", exist_ok=True)
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        path = os.path.join("log", f"mva_{label}_{mva}_{timestamp}.png")
+        driver.save_screenshot(path)
+        log.info(f"[MVA][SCREENSHOT] Saved: {path}")
+    except Exception as e:
+        log.warning(f"[MVA][SCREENSHOT] Could not capture: {e}")
+
+
 def read_mva_list(csv_path):
     import re
 
@@ -197,9 +209,11 @@ def main():
                 log.info(f"[MVA][WAIT] UI echoed MVA {last8}")
             except Exception:
                 log.warning(f"[MVA][WAIT] UI did not echo MVA {last8} in time; results may be stale.")
+                _capture_mva_failure_screenshot(driver, "echo_timeout", mva)
             results.append((mva, vin, desc))
         except Exception as e:
             log.error(f"[MVA][ERROR] {mva} - {e}")
+            _capture_mva_failure_screenshot(driver, "error", mva)
             results.append((mva, "N/A", "N/A"))
 
     abs_results_path = os.path.abspath(RESULTS_FILE)
