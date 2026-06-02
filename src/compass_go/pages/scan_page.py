@@ -36,10 +36,11 @@ class ScanPage:
             begin.click()
 
         # Activate the Scan tab once it renders (the Begin Scanning click can
-        # be slow to swap views). Skip if it's already selected or absent.
+        # be slow — the app may take 30-60s to swap views). Skip if it's
+        # already selected or absent.
         scan_tab = self._page.locator(SCAN_TAB_SELECTOR).first
         try:
-            scan_tab.wait_for(state="visible", timeout=30_000)
+            scan_tab.wait_for(state="visible", timeout=90_000)
             if scan_tab.get_attribute("aria-selected") != "true":
                 scan_tab.click()
         except Exception:
@@ -50,11 +51,11 @@ class ScanPage:
         if container.count():
             # Prefer the legacy scoped container when present (test fixture).
             input_locator = container.get_by_label(INPUT_ARIA_LABEL)
-        input_locator.wait_for(timeout=30_000)
+        input_locator.wait_for(timeout=90_000)
         input_locator.fill(mva)
 
         # Enter button sits next to the input. Use role+name; if multiple
         # Enter buttons exist, the one adjacent to the focused input wins.
         self._page.get_by_role("button", name="Enter", exact=True).first.click()
-        self._page.get_by_role("heading", name="Vehicle Details").wait_for(timeout=30_000)
+        self._page.get_by_role("heading", name="Vehicle Details").wait_for(timeout=90_000)
         return VehicleDetailsPage(self._page)
