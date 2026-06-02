@@ -7,7 +7,7 @@ Prerequisites:
   - Edge installed and signed in to your corporate account on the Default profile
   - All Edge windows closed (the session will kill running msedge.exe)
   - Optional env: COMPASS_GO_E2E_MVA (defaults to 058883134)
-                  COMPASS_GO_ENTRY_URL (defaults to https://go.avisbudget.com/)
+                  COMPASS_GO_ENTRY_URL (overrides default Foundry PWA URL)
 """
 import os
 from pathlib import Path

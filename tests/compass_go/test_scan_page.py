@@ -22,16 +22,18 @@ def page():
         browser.close()
 
 
-def test_is_displayed_true_when_scan_container_present(page):
+def test_is_displayed_true_when_begin_scanning_visible(page):
     page.set_content(SCAN_VEHICLE_HTML)
 
     assert ScanPage(page).is_displayed() is True
 
 
-def test_submit_fills_input_and_clicks_enter(page):
+def test_submit_clicks_begin_then_fills_input_and_clicks_enter(page):
     page.set_content(SCAN_VEHICLE_HTML)
     page.evaluate(
         """() => {
+            const begin = document.getElementById('begin-scanning');
+            begin.addEventListener('click', () => begin.remove());
             const btn = [...document.querySelectorAll('button')]
                 .find(b => b.textContent.trim() === 'Enter');
             btn.addEventListener('click', () => {

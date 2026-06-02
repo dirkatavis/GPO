@@ -45,7 +45,10 @@ VEHICLE_DETAILS_COLLAPSED_HTML = """
 
 SCAN_VEHICLE_HTML = """
 <html><body>
-<h2>Scan Vehicle</h2>
+<h2>Scan Vehicles</h2>
+<button type="button" id="begin-scanning">
+  <svg></svg>Begin Scanning
+</button>
 <div class="enter-mva-vin">
   <div>
     <input aria-label="Or enter MVA/VIN" type="text" placeholder="Or enter MVA/VIN" />

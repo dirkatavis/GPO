@@ -54,5 +54,5 @@ class ScrapeFlow:
             details.back()
             return VehicleRecord(mva=scraped_mva, vin=vin, desc=desc)
         except Exception as exc:  # noqa: BLE001 — per-row resilience
-            log.warning("Scrape failed for MVA %s: %s", mva, exc)
+            log.exception("Scrape failed for MVA %s: %s", mva, exc)
             return VehicleRecord(mva=mva, vin="", desc="")

@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-DEFAULT_ENTRY_URL = "https://go.avisbudget.com/"
+DEFAULT_ENTRY_URL = "https://go.avisbudget.palantirfoundry.com/"
 DEFAULT_EDGE_USER_DATA_DIR = Path(os.getenv("LOCALAPPDATA", "")) / "Microsoft" / "Edge" / "User Data"
 DEFAULT_EDGE_PROFILE_DIRECTORY = "Default"
 
@@ -81,7 +81,7 @@ class CompassGoSession:
                 no_viewport=True,
             )
             try:
-                page = context.pages[0] if context.pages else context.new_page()
+                page = context.new_page()
                 page.goto(self._entry_url, wait_until="domcontentloaded")
                 yield page
             finally:

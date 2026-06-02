@@ -11,6 +11,7 @@ Possible landing states (in expected order):
 from __future__ import annotations
 
 import logging
+import os
 import time
 from typing import TYPE_CHECKING
 
@@ -23,7 +24,7 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-MAX_AUTH_SECONDS = 60
+MAX_AUTH_SECONDS = int(os.getenv("COMPASS_GO_AUTH_TIMEOUT_S", "60"))
 POLL_INTERVAL_S = 0.5
 
 
