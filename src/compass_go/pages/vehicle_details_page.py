@@ -5,10 +5,9 @@ generated ids are intentionally avoided. See
 `/memories/repo/compass-go-locator-strategy.md`.
 
 Confirmed data-key values:
-    vinNo  -> VIN row
-Pending (TODO — capture from DOM):
-    ?      -> Description row (likely `desc` or `description`)
-    ?      -> MVA row (likely `mva` or `mvaNo`)
+    vinNo          -> VIN row
+    mvaNo          -> MVA row
+    makeModelDesc  -> Description row (Make/Model)
 """
 from __future__ import annotations
 
@@ -17,10 +16,9 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from playwright.sync_api import Page
 
-# Tentative — update when DOM snippets confirm the real keys.
 DATA_KEY_VIN = "vinNo"
-DATA_KEY_DESC = "desc"
-DATA_KEY_MVA = "mva"
+DATA_KEY_MVA = "mvaNo"
+DATA_KEY_DESC = "makeModelDesc"
 
 
 class VehicleDetailsPage:
@@ -41,16 +39,15 @@ class VehicleDetailsPage:
     def expand_show_more(self) -> None:
         """Click Show More to reveal hidden rows (including VIN).
 
-        TODO: confirm button selector from DOM snippet. Current fallback uses
-        accessible name match. Idempotent — no-op when already expanded.
+        Idempotent: if already expanded (Show Less visible), this is a no-op.
+        Button has no stable id/data-attr; matched by accessible name.
         """
-        import re
-
-        toggle = self._page.get_by_role("button", name=re.compile(r"Show More", re.IGNORECASE))
-        if toggle.count() > 0 and toggle.first.is_visible():
-            toggle.first.click()
-            self._page.get_by_role("button", name=re.compile(r"Show Less", re.IGNORECASE)).wait_for()
+        show_less = self._page.get_by_role("button", name="Show Less", exact=True)
+        if show_less.count() > 0 and show_less.first.is_visible():
+            return
+        self._page.get_by_role("button", name="Show More", exact=True).click()
+        show_less.wait_for()
 
     def back(self) -> None:
-        """TODO: implement once back-arrow selector confirmed."""
-        raise NotImplementedError("back(): pending back-arrow DOM snippet")
+        """Navigate back via the chevron-left button (class `back-button`)."""
+        self._page.locator("button.back-button").click()
