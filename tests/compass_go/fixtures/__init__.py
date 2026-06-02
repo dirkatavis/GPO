@@ -11,16 +11,16 @@ VEHICLE_DETAILS_EXPANDED_HTML = """
 <table>
   <tbody>
     <tr data-key="makeModelDesc" role="row">
-      <td role="rowheader"><span>Description</span></td>
-      <td role="gridcell"><span>NISSROGU</span></td>
+      <td data-key="makeModelDesc.0" role="rowheader"><span>Description</span></td>
+      <td data-key="makeModelDesc.1" role="gridcell"><span>NISSROGU</span></td>
     </tr>
     <tr data-key="mvaNo" role="row">
-      <td role="rowheader"><span>MVA</span></td>
-      <td role="gridcell"><span>058883134</span></td>
+      <td data-key="mvaNo.0" role="rowheader"><span>MVA</span></td>
+      <td data-key="mvaNo.1" role="gridcell"><span>058883134</span></td>
     </tr>
     <tr data-key="vinNo" role="row">
-      <td role="rowheader"><span>VIN</span></td>
-      <td role="gridcell"><span>5XYP64GC1SG682257</span></td>
+      <td data-key="vinNo.0" role="rowheader"><span>VIN</span></td>
+      <td data-key="vinNo.1" role="gridcell"><span>5XYP64GC1SG682257</span></td>
     </tr>
   </tbody>
 </table>
@@ -34,8 +34,8 @@ VEHICLE_DETAILS_COLLAPSED_HTML = """
 <table>
   <tbody>
     <tr data-key="mvaNo" role="row">
-      <td role="rowheader"><span>MVA</span></td>
-      <td role="gridcell"><span>058883134</span></td>
+      <td data-key="mvaNo.0" role="rowheader"><span>MVA</span></td>
+      <td data-key="mvaNo.1" role="gridcell"><span>058883134</span></td>
     </tr>
   </tbody>
 </table>

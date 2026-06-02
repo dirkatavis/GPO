@@ -49,6 +49,8 @@ class ScrapeFlow:
         try:
             details = self._scan.submit(mva)
             details.expand_show_more()
+            # Read VIN first — it's hidden behind Show More and loads slower
+            # than the always-visible Description / MVA cells.
             vin = details.read(DATA_KEY_VIN)
             desc = details.read(DATA_KEY_DESC)
             scraped_mva = details.read(DATA_KEY_MVA) or mva
