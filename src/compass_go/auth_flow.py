@@ -15,6 +15,7 @@ import os
 import time
 from typing import TYPE_CHECKING
 
+from .diagnostics import capture_failure, setup_file_logging
 from .pages.location_picker_page import LocationPickerPage
 from .pages.login_confirm_page import LoginConfirmPage
 from .pages.scan_page import ScanPage
@@ -32,6 +33,7 @@ class AuthFlow:
     """Composes the three possible landing pages into a single 'reach Scan'."""
 
     def __init__(self, page: "Page"):
+        setup_file_logging()
         self._page = page
         self._login = LoginConfirmPage(page)
         self._location = LocationPickerPage(page)
@@ -64,6 +66,7 @@ class AuthFlow:
             last_state = "waiting"
             time.sleep(POLL_INTERVAL_S)
 
+        capture_failure(self._page, f"auth_timeout_{last_state}")
         raise TimeoutError(
             f"AuthFlow: never reached ScanPage within {MAX_AUTH_SECONDS}s "
             f"(last_state={last_state})"

@@ -19,6 +19,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.compass_go.auth_flow import AuthFlow  # noqa: E402
+from src.compass_go.diagnostics import setup_file_logging  # noqa: E402
 from src.compass_go.scrape_flow import ScrapeFlow  # noqa: E402
 from src.compass_go.session import CompassGoSession  # noqa: E402
 from src.compass_go.writer import ResultsWriter  # noqa: E402
@@ -30,6 +31,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
+setup_file_logging()
 log = logging.getLogger("CompassGoParser")
 
 

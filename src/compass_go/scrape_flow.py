@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Iterable
 
+from .diagnostics import capture_failure
 from .pages.scan_page import ScanPage
 from .pages.vehicle_details_page import (
     DATA_KEY_DESC,
@@ -51,8 +52,21 @@ class ScrapeFlow:
             vin = details.read(DATA_KEY_VIN)
             desc = details.read(DATA_KEY_DESC)
             scraped_mva = details.read(DATA_KEY_MVA) or mva
+            if not vin or not desc:
+                log.warning(
+                    "Empty read for MVA %s (vin=%r desc=%r) — capturing DOM",
+                    mva, vin, desc,
+                )
+                try:
+                    capture_failure(self._scan._page, f"empty_read_{mva}")
+                except Exception:
+                    log.exception("capture_failure unavailable for MVA %s", mva)
             details.back()
             return VehicleRecord(mva=scraped_mva, vin=vin, desc=desc)
         except Exception as exc:  # noqa: BLE001 — per-row resilience
             log.exception("Scrape failed for MVA %s: %s", mva, exc)
+            try:
+                capture_failure(self._scan._page, f"scrape_{mva}")
+            except Exception:
+                log.exception("capture_failure unavailable for MVA %s", mva)
             return VehicleRecord(mva=mva, vin="", desc="")
