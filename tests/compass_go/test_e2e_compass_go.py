@@ -1,6 +1,7 @@
 """End-to-end test for the Compass GO scraper.
 
 Runs against the live Compass GO app. Skipped by default — opt in via:
+    set COMPASS_GO_RUN_E2E_TESTS=1
     pytest -m e2e tests/compass_go/test_e2e_compass_go.py
 
 Prerequisites:
@@ -14,7 +15,16 @@ from pathlib import Path
 
 import pytest
 
-pytestmark = pytest.mark.e2e
+_RUN_E2E = os.getenv("COMPASS_GO_RUN_E2E_TESTS", "").strip().lower() in {"1", "true", "yes"}
+
+pytestmark = [
+    pytest.mark.e2e,
+    pytest.mark.skipif(
+        not _RUN_E2E,
+        reason="Live E2E disabled \u2014 set COMPASS_GO_RUN_E2E_TESTS=1 to enable "
+               "(this test kills running Edge processes).",
+    ),
+]
 
 pytest.importorskip("playwright.sync_api")
 

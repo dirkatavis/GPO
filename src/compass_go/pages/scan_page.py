@@ -24,6 +24,11 @@ class ScanPage:
     def __init__(self, page: "Page"):
         self._page = page
 
+    @property
+    def page(self) -> "Page":
+        """Public accessor for the underlying Playwright Page (diagnostics)."""
+        return self._page
+
     def _scan_nav(self):
         # Bottom-nav "Scan" tab — present on every authenticated view.
         candidates = [
@@ -78,7 +83,7 @@ class ScanPage:
         input_locator = self._page.get_by_label(INPUT_ARIA_LABEL).first
         if container.count():
             # Prefer the legacy scoped container when present (test fixture).
-            input_locator = container.get_by_label(INPUT_ARIA_LABEL)
+            input_locator = container.get_by_label(INPUT_ARIA_LABEL).first
         log.info("ScanPage.submit: waiting for MVA/VIN input")
         input_locator.wait_for(timeout=90_000)
         log.info("ScanPage.submit: filling MVA=%s", mva)

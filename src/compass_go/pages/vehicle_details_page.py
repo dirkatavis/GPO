@@ -2,7 +2,7 @@
 
 Locator strategy: stable `data-key` attributes on each row. React-Aria
 generated ids are intentionally avoided. See
-`/memories/repo/compass-go-locator-strategy.md`.
+`Docs/compassgo-refactor-plan.md` for the broader scraper plan.
 
 Confirmed data-key values:
     vinNo          -> VIN row

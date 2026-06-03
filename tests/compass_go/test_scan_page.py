@@ -14,7 +14,13 @@ def page():
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=True)
+        try:
+            browser = pw.chromium.launch(headless=True)
+        except Exception as exc:  # pragma: no cover - environment-dependent
+            pytest.skip(
+                f"Chromium not available for Playwright: {exc}. "
+                "Run '.venv\\Scripts\\python.exe -m playwright install chromium'."
+            )
         context = browser.new_context()
         pg = context.new_page()
         yield pg

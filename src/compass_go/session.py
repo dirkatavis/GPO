@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import os
 import subprocess
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Iterator
@@ -24,22 +25,43 @@ DEFAULT_EDGE_USER_DATA_DIR = Path(os.getenv("LOCALAPPDATA", "")) / "Microsoft" /
 DEFAULT_EDGE_PROFILE_DIRECTORY = "Default"
 
 
-def kill_running_edge() -> None:
-    """Release the user-data-dir lock by terminating any running Edge."""
+def _is_edge_running() -> bool:
     try:
-        check = subprocess.run(
+        result = subprocess.run(
             ["tasklist", "/FI", "IMAGENAME eq msedge.exe", "/NH"],
             capture_output=True, text=True, check=False,
         )
-        if "msedge.exe" not in check.stdout:
-            return
-        log.info("Closing running Edge to release profile lock")
+    except OSError as exc:
+        log.warning("tasklist failed: %s", exc)
+        return False
+    return "msedge.exe" in result.stdout
+
+
+def kill_running_edge() -> None:
+    """Release the user-data-dir lock by terminating any running Edge.
+
+    Mirrors the WorkItems pattern: kill -> short sleep -> verify gone.
+    Raises RuntimeError if Edge survives the kill so we fail fast instead of
+    hitting an opaque 'profile in use' error from launch_persistent_context.
+    """
+    if not _is_edge_running():
+        return
+    log.info("Closing running Edge to release profile lock")
+    try:
         subprocess.run(
             ["taskkill", "/F", "/IM", "msedge.exe", "/T"],
             capture_output=True, text=True, check=False,
         )
     except OSError as exc:
         log.warning("Failed to terminate Edge processes: %s", exc)
+        return
+    time.sleep(2)
+    if _is_edge_running():
+        raise RuntimeError(
+            "Edge is still running after kill attempt. Close all Edge windows "
+            "manually and retry."
+        )
+    log.info("Edge processes cleared \u2014 proceeding with launch")
 
 
 def _resolve_user_data_dir() -> str:

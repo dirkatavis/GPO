@@ -35,8 +35,15 @@ class LoginConfirmPage:
     def continue_as_current_user(self) -> None:
         wwid = os.getenv("GLASS_LOGIN_ID", "").strip()
         if not wwid:
+            try:
+                from config.config_loader import get_config
+                wwid = (get_config("login_id") or "").strip()
+            except Exception:
+                log.exception("LoginConfirm: config fallback for login_id failed")
+        if not wwid:
             log.warning(
-                "LoginConfirm: Confirm User dialog shown but GLASS_LOGIN_ID not set"
+                "LoginConfirm: Confirm User dialog shown but no WWID available "
+                "(set GLASS_LOGIN_ID or config 'login_id')"
             )
             return
 

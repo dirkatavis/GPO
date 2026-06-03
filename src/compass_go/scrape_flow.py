@@ -26,12 +26,13 @@ class ScrapeFlow:
         self._writer = writer
 
     def run(self, mvas: Iterable[str]) -> int:
-        """Process each MVA. Returns count of successfully scraped rows.
+        """Process each MVA. Returns the count of rows written.
 
-        Errors on individual MVAs are logged and produce an N/A row; they do
-        not abort the loop. This matches the legacy worker contract — Phase 3
-        of the orchestrator only aborts on global failures (auth, missing
-        worker, etc.), not per-row scrape misses.
+        Each non-empty input MVA produces exactly one output row (with empty
+        VIN/Desc coerced to N/A on failure). Errors on individual MVAs are
+        logged and do not abort the loop — this matches the legacy worker
+        contract, where Phase 3 only aborts on global failures (auth,
+        missing worker, etc.).
         """
         count = 0
         for mva in mvas:
@@ -58,7 +59,7 @@ class ScrapeFlow:
                     mva, vin, desc,
                 )
                 try:
-                    capture_failure(self._scan._page, f"empty_read_{mva}")
+                    capture_failure(self._scan.page, f"empty_read_{mva}")
                 except Exception:
                     log.exception("capture_failure unavailable for MVA %s", mva)
             details.back()
@@ -66,7 +67,7 @@ class ScrapeFlow:
         except Exception as exc:  # noqa: BLE001 — per-row resilience
             log.exception("Scrape failed for MVA %s: %s", mva, exc)
             try:
-                capture_failure(self._scan._page, f"scrape_{mva}")
+                capture_failure(self._scan.page, f"scrape_{mva}")
             except Exception:
                 log.exception("capture_failure unavailable for MVA %s", mva)
             return VehicleRecord(mva=mva, vin="", desc="")
