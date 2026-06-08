@@ -3,12 +3,21 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import pytest
+
 from src.compass_go.outcomes import MVANotFoundError
+from src.compass_go import scrape_flow as scrape_flow_module
 from src.compass_go.scrape_flow import (
     MISSING_VIN,
     NOT_FOUND_DESC,
     ScrapeFlow,
 )
+
+
+@pytest.fixture(autouse=True)
+def _no_capture_failure(monkeypatch):
+    """Stub capture_failure so unit tests don't touch the filesystem."""
+    monkeypatch.setattr(scrape_flow_module, "capture_failure", lambda *a, **kw: None)
 
 
 def _make_scan_stub(submit_side_effect):

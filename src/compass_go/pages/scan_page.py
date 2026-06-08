@@ -121,6 +121,13 @@ class ScanPage:
         if outcome is Outcome.MVA_NOT_FOUND:
             log.warning("ScanPage.submit: MVA %s — Vehicle Not Found", mva)
             raise MVANotFoundError(mva)
+        if outcome is not Outcome.DETAILS_READY:
+            # Defensive: a new detector was added to DEFAULT_DETECTORS but
+            # this method wasn't updated. Fail fast rather than silently
+            # returning a stale VehicleDetailsPage.
+            raise RuntimeError(
+                f"ScanPage.submit: unhandled outcome {outcome!r} for MVA {mva}"
+            )
         log.info("ScanPage.submit: Vehicle Details ready")
         return VehicleDetailsPage(self._page)
 

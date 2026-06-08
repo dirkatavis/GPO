@@ -61,7 +61,12 @@ def test_default_detectors_priority_error_before_success(page):
     # alongside the error card — this is exactly what Compass GO renders.
     page.set_content(VEHICLE_NOT_FOUND_HTML)
 
-    fired = next((d(page) for d in DEFAULT_DETECTORS if d(page) is not None), None)
+    fired = None
+    for detector in DEFAULT_DETECTORS:
+        result = detector(page)
+        if result is not None:
+            fired = result
+            break
     assert fired is Outcome.MVA_NOT_FOUND
 
 
